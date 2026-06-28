@@ -15,7 +15,7 @@ type Strategy interface {
 }
 
 // SummarizeFunc generates a summary from a slice of messages.
-// In production this calls the LLM Gateway.
+// In production this calls the LLM engine.
 type SummarizeFunc func(messages []models.AgentMessage) (string, error)
 
 // KeepRecent keeps the last N messages and summarizes the rest.

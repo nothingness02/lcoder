@@ -188,5 +188,5 @@ type GatewayError struct {
 }
 
 func (e GatewayError) Error() string {
-	return fmt.Sprintf("gateway error %s: %s", e.Code, e.Message)
+	return fmt.Sprintf("engine error %s: %s", e.Code, e.Message)
 }

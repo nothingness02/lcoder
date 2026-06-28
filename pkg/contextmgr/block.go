@@ -31,7 +31,7 @@ const (
 	StabilityDynamic Stability = "dynamic" // May change every turn
 )
 
-// CacheHint gives cache-placement advice to the Gateway.
+// CacheHint gives cache-placement advice to the LLM engine.
 type CacheHint string
 
 const (

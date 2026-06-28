@@ -39,7 +39,7 @@ Write the durable summary that REPLACES the earlier messages. Be specific and co
 Preserve exact identifiers (paths, symbols, flags). Do not invent facts. Omit empty sections.
 </summary>`
 
-// NewLLMSummarizer returns a SummarizeFunc that asks the LLM Gateway to compact
+// NewLLMSummarizer returns a SummarizeFunc that asks the LLM engine to compact
 // older messages into a dual-stage summary, keeping only the <summary> block.
 // The returned function matches contextmgr.SummarizeFunc without importing it.
 func NewLLMSummarizer(client *llm.Client, model models.ModelRef) SummarizeFunc {
@@ -86,9 +86,9 @@ func NewLLMSummarizer(client *llm.Client, model models.ModelRef) SummarizeFunc {
 				gotFinal = true
 			case "error":
 				if ge, ok := ev.Error(); ok {
-					return "", fmt.Errorf("llm summarizer: gateway error: %w", ge)
+					return "", fmt.Errorf("llm summarizer: engine error: %w", ge)
 				}
-				return "", fmt.Errorf("llm summarizer: gateway error")
+				return "", fmt.Errorf("llm summarizer: engine error")
 			}
 		}
 

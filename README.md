@@ -3,7 +3,7 @@
 A minimal, extensible SWE agent harness.
 
 - **Core**: Go
-- **LLM Gateway**: Python (`litellm`)
+- **LLM engine**: in-process Go (hand-written HTTP+SSE adapters for OpenAI-compatible and Anthropic providers)
 - **Extension tools**: HTTP servers and MCP (stdio) servers
 - **UI**: Terminal UI via `charmbracelet/bubbletea`
 - **Session storage**: JSONL with branching (`parent_id`)
@@ -16,17 +16,7 @@ A minimal, extensible SWE agent harness.
 go build -o lcoder ./cmd/lcoder
 ```
 
-### 2. Install and start the Python LLM Gateway
-
-```bash
-cd gateway
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e .
-python -m lcoder_gateway --port 8787
-```
-
-### 3. Configure
+### 2. Configure
 
 ```bash
 mkdir -p ~/.lcoder
@@ -35,7 +25,7 @@ cp configs/lcoder.yaml ~/.lcoder/config.yaml
 # OPENAI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY
 ```
 
-### 4. Run
+### 3. Run
 
 One-shot:
 
@@ -141,16 +131,6 @@ Observed metrics include:
 - Turn durations
 - Total session duration
 
-## Gateway Auto-Start
-
-If the LLM Gateway is not already running, Lcoder tries to start it automatically using:
-
-1. The command in `LCODER_GATEWAY_CMD` (space-separated)
-2. `lcoder-llm-gateway` (if installed from `gateway/`)
-3. `python -m lcoder_gateway`
-4. `python3 -m lcoder_gateway`
-5. `py -m lcoder_gateway`
-
 ## Extension Tools
 
 Lcoder supports two extension mechanisms:
@@ -188,7 +168,6 @@ See `docs/` for design documents:
 - [docs/architecture.md](docs/architecture.md)
 - [docs/agent-loop.md](docs/agent-loop.md)
 - [docs/event-bus.md](docs/event-bus.md)
-- [docs/gateway-api.md](docs/gateway-api.md)
 - [docs/http-tool-protocol.md](docs/http-tool-protocol.md)
 - [docs/mcp.md](docs/mcp.md)
 - [docs/session-storage.md](docs/session-storage.md)

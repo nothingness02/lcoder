@@ -3,7 +3,7 @@ package llm
 
 import "context"
 
-// TurnStream yields normalized gateway events from an in-process engine stream.
+// TurnStream yields normalized events from an in-process engine stream.
 type TurnStream struct {
 	ch   <-chan GatewayEvent
 	done bool

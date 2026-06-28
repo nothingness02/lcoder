@@ -10,10 +10,10 @@ import (
 	"github.com/lcoder/lcoder/pkg/tools"
 )
 
-func TestBuilderRequiresGatewayClient(t *testing.T) {
+func TestBuilderRequiresLLMClient(t *testing.T) {
 	_, err := NewBuilder().Build()
 	if err == nil {
-		t.Fatal("expected error for missing gateway client")
+		t.Fatal("expected error for missing llm client")
 	}
 }
 

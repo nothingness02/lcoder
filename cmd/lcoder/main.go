@@ -424,7 +424,7 @@ func runTUI(ctx context.Context, setup *agentSetup) error {
 func modelsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "models",
-		Short: "List available models from the Gateway",
+		Short: "List available models from the catalog",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
@@ -903,7 +903,7 @@ func makeContextManager(cfg config.Config, budget config.TokenBudget, llmClient 
 	}
 	// Attach a real LLM summarizer (guarded by a circuit breaker) only when
 	// automatic compaction is enabled. Otherwise the window policy degrades to
-	// truncation. The breaker trips after repeated failures so a flaky gateway
+	// truncation. The breaker trips after repeated failures so a flaky provider
 	// never crashes the turn.
 	if cfg.Context.AutoCompact && cfg.Context.Mode == "auto" {
 		breaker := compaction.NewCircuitBreaker(0)

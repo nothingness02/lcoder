@@ -81,7 +81,7 @@ func DefaultConfig() Config {
 		TUI:      TUIConfig{Theme: "dark"},
 		Context: ContextConfig{
 			Mode:             "auto",
-			MaxTokens:        0, // 0 = unset; resolved from catalog/litellm at runtime
+			MaxTokens:        0, // 0 = unset; resolved from catalog/engine at runtime
 			TargetTokens:     0, // 0 = unset; derived from MaxTotal when missing
 			ReserveOutput:    0, // 0 = unset; falls back to defaultReserveOutput
 			StaticRatio:      60,
@@ -108,7 +108,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// Budget resolution fallbacks, used only when no explicit user/catalog/litellm
+// Budget resolution fallbacks, used only when no explicit user/catalog/discovered
 // value is available for the configured model.
 const (
 	fallbackMaxTokens    = 128000
@@ -118,15 +118,15 @@ const (
 
 // ResolveContextBudget returns the effective context budget for the configured
 // model, plus the source that determined MaxTotal ("user", "catalog",
-// "litellm", or "default"). litellmWindow is the window auto-discovered from the
-// gateway (0 if unknown); pass 0 for fully offline resolution.
+// "discovered", or "default"). discoveredWindow is the window looked up from the
+// LLM engine/catalog at startup (0 if unknown); pass 0 for fully offline resolution.
 //
 // Priority per field:
 //
-//	MaxTotal:      user context.max_tokens > catalog context_window > litellm window > fallback
+//	MaxTotal:      user context.max_tokens > catalog context_window > discovered window > fallback
 //	ReserveOutput: user context.reserve_output > catalog budget.reserve_output > default
 //	TargetTotal:   user context.target_tokens > catalog budget.target > MaxTotal * ratio
-func (c Config) ResolveContextBudget(litellmWindow int) (TokenBudget, string) {
+func (c Config) ResolveContextBudget(discoveredWindow int) (TokenBudget, string) {
 	cfg := c.Context
 	meta, hasMeta := c.Catalog.Lookup(c.Model)
 
@@ -137,9 +137,9 @@ func (c Config) ResolveContextBudget(litellmWindow int) (TokenBudget, string) {
 		maxTotal = meta.ContextWindow
 		source = "catalog"
 	}
-	if maxTotal <= 0 && litellmWindow > 0 {
-		maxTotal = litellmWindow
-		source = "litellm"
+	if maxTotal <= 0 && discoveredWindow > 0 {
+		maxTotal = discoveredWindow
+		source = "discovered"
 	}
 	if maxTotal <= 0 {
 		maxTotal = fallbackMaxTokens

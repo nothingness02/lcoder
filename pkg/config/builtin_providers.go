@@ -6,13 +6,13 @@ type ProviderInfo struct {
 	Name        string // internal id, e.g. "openai"
 	Display     string // human-facing name for the TUI
 	KeyEnv      string // standard api key environment variable
-	Route       string // litellm protocol prefix (defaults to Name)
-	DefaultBase string // non-standard base_url; empty when litellm's default applies
+	Route       string // adapter protocol prefix (defaults to Name)
+	DefaultBase string // non-standard base_url; empty when the adapter's default applies
 }
 
 // BuiltinProviders is the curated list of common providers shown in the TUI.
-// litellm already knows most providers' base_url/route; this table only adds
-// what the UI needs (display name, key env) plus a few non-standard bases.
+// The engine's base-URL table already covers most providers' base_url/route; this
+// table only adds what the UI needs (display name, key env) plus a few non-standard bases.
 var BuiltinProviders = []ProviderInfo{
 	{Name: "openai", Display: "OpenAI", KeyEnv: "OPENAI_API_KEY", Route: "openai"},
 	{Name: "anthropic", Display: "Anthropic", KeyEnv: "ANTHROPIC_API_KEY", Route: "anthropic"},

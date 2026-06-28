@@ -8,7 +8,7 @@ import (
 // ProviderConn holds the connection settings for a single provider, mirroring
 // opencode's provider options block. It lets Lcoder reach custom OpenAI-compatible
 // endpoints (relays, self-hosted, region-specific bases like api.moonshot.cn)
-// that LiteLLM's default env-var routing cannot express.
+// that the engine's default per-provider routing cannot express.
 type ProviderConn struct {
 	BaseURL string            `yaml:"base_url" json:"base_url,omitempty"`
 	APIKey  string            `yaml:"api_key"  json:"api_key,omitempty"`

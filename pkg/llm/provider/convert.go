@@ -39,7 +39,7 @@ func openAIContent(parts []models.ContentPart) any {
 }
 
 // openAIMessages converts agent messages to OpenAI chat messages, dropping any
-// message that produces no representable content (mirrors message_to_litellm).
+// message that produces no representable content.
 func openAIMessages(msgs []models.AgentMessage) []map[string]any {
 	out := []map[string]any{}
 	for _, m := range msgs {

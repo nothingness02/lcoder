@@ -15,10 +15,10 @@ tui:
 #   moonshot:                              # Kimi via the China endpoint
 #     base_url: "https://api.moonshot.cn/v1"
 #     api_key: "{env:MOONSHOT_API_KEY}"
-#   dashscope:                             # Qwen (LiteLLM-native prefix)
+#   dashscope:                             # Qwen
 #     api_key: "{env:DASHSCOPE_API_KEY}"
 #   myrelay:                               # any OpenAI-compatible relay
-#     route: openai                        # ride litellm's openai protocol
+#     route: openai                        # ride the openai-compatible protocol
 #     base_url: "https://api.relay.com/v1"
 #     api_key: "{env:RELAY_KEY}"
 #     headers:

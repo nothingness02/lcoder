@@ -479,7 +479,7 @@ func (a *Agent) streamAssistant(ctx context.Context, turn int) (models.AgentMess
 			if ge, ok := ev.Error(); ok {
 				return models.AgentMessage{}, ge
 			}
-			return models.AgentMessage{}, fmt.Errorf("unknown gateway error")
+			return models.AgentMessage{}, fmt.Errorf("unknown engine error")
 		}
 	}
 

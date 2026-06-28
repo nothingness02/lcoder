@@ -17,8 +17,8 @@ func catalogFor(model string, window, target, reserve int) Config {
 	return cfg
 }
 
-// With no user config, no catalog, and no litellm window, resolution falls back
-// to the hard defaults and reports source "default".
+// With no user config, no catalog, and no discovered window, resolution falls
+// back to the hard defaults and reports source "default".
 func TestResolveContextBudgetDefaultFallback(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Model = "mystery-model"
@@ -38,19 +38,19 @@ func TestResolveContextBudgetDefaultFallback(t *testing.T) {
 	}
 }
 
-// A litellm-discovered window is used when neither user nor catalog supplies one.
-func TestResolveContextBudgetLitellmWindow(t *testing.T) {
+// A discovered window is used when neither user nor catalog supplies one.
+func TestResolveContextBudgetDiscoveredWindow(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Model = "mystery-model"
 	budget, source := cfg.ResolveContextBudget(256000)
 
-	if source != "litellm" {
-		t.Fatalf("expected source litellm, got %q", source)
+	if source != "discovered" {
+		t.Fatalf("expected source discovered, got %q", source)
 	}
 	if budget.MaxTotal != 256000 {
 		t.Fatalf("expected max 256000, got %d", budget.MaxTotal)
 	}
-	// target derived from the litellm window, reserve from default.
+	// target derived from the discovered window, reserve from default.
 	if budget.TargetTotal != int(256000*defaultTargetRatio) {
 		t.Fatalf("expected derived target, got %d", budget.TargetTotal)
 	}
@@ -59,8 +59,8 @@ func TestResolveContextBudgetLitellmWindow(t *testing.T) {
 	}
 }
 
-// The catalog window overrides litellm (explicit per-model override).
-func TestResolveContextBudgetCatalogOverridesLitellm(t *testing.T) {
+// The catalog window overrides the discovered window (explicit per-model override).
+func TestResolveContextBudgetCatalogOverridesDiscovered(t *testing.T) {
 	cfg := catalogFor("claude-sonnet-4-20250514", 200000, 180000, 8192)
 	budget, source := cfg.ResolveContextBudget(999999)
 
@@ -72,7 +72,7 @@ func TestResolveContextBudgetCatalogOverridesLitellm(t *testing.T) {
 	}
 }
 
-// User global config wins over both catalog and litellm.
+// User global config wins over both catalog and the discovered window.
 func TestResolveContextBudgetUserOverrides(t *testing.T) {
 	cfg := catalogFor("claude-sonnet-4-20250514", 200000, 180000, 8192)
 	cfg.Context.MaxTokens = 64000

@@ -134,7 +134,7 @@ func (b *Builder) WithObservability(c *observability.Collector) *Builder {
 // Build validates required fields and returns a configured Agent.
 func (b *Builder) Build() (*Agent, error) {
 	if b.llmClient == nil {
-		return nil, fmt.Errorf("gateway client is required")
+		return nil, fmt.Errorf("llm client is required")
 	}
 	if b.registry == nil {
 		return nil, fmt.Errorf("tool registry is required")

@@ -33,7 +33,7 @@ type providerPanel struct {
 	models   []string // model ids for the chosen provider
 	modelIdx int
 
-	// manualModel captures a typed model id when the gateway returns no models.
+	// manualModel captures a typed model id when the engine returns no models.
 	manualModel textinput.Model
 	manual      bool
 
@@ -119,7 +119,7 @@ func (m *Model) renderProviderPanel() string {
 }
 
 // enterModelStep records the chosen provider and loads its model candidates from
-// the gateway (/v1/models), falling back to the local catalog, then to manual
+// the LLM engine, falling back to the local catalog, then to manual
 // entry when neither yields a model for this provider.
 func (m *Model) enterModelStep() tea.Cmd {
 	p := &m.provPanel
@@ -139,7 +139,7 @@ func (m *Model) enterModelStep() tea.Cmd {
 	return nil
 }
 
-// fetchProviderModels returns model ids for the provider: gateway discovery first,
+// fetchProviderModels returns model ids for the provider: engine discovery first,
 // then the local catalog. Returns nil when neither is available.
 func (m *Model) fetchProviderModels(provider string) []string {
 	var ids []string
@@ -194,7 +194,7 @@ func (m *Model) enterKeyStep() bool {
 }
 
 // commitProvider persists the entered key, hot-registers the provider with the
-// gateway, recomputes the context budget for the chosen model, switches the live
+// LLM engine, recomputes the context budget for the chosen model, switches the live
 // agent, and closes the panel.
 func (m *Model) commitProvider() {
 	p := &m.provPanel
@@ -234,7 +234,7 @@ func (m *Model) commitProvider() {
 			defer cancel()
 			if err := m.llmClient.RegisterProvider(ctx, provName, entry); err != nil {
 				// Non-fatal: the key is saved and will apply on next launch.
-				p.errMsg = "网关热更新失败(下次启动生效): " + err.Error()
+				p.errMsg = "引擎热更新失败(下次启动生效): " + err.Error()
 			}
 		}
 	}

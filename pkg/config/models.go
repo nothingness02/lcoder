@@ -85,8 +85,8 @@ func LoadModelCatalogFrom(path string) (ModelCatalog, error) {
 
 // resolveModelsConfigPath returns the first existing catalog path among the
 // LCODER_MODELS_CONFIG env var, ./configs/models.yaml, and ~/.lcoder/models.yaml.
-// The returned path is absolute so it can be handed to a gateway subprocess that
-// may run with a different working directory.
+// The returned path is absolute so it remains valid regardless of the process's
+// working directory.
 func resolveModelsConfigPath() (string, bool) {
 	abs := func(p string) string {
 		if a, err := filepath.Abs(p); err == nil {

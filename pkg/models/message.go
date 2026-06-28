@@ -303,8 +303,8 @@ type ToolDefinition struct {
 	ExecutionMode ExecutionMode  `json:"execution_mode"`
 }
 
-// ModelRef identifies a specific model through the Gateway. Provider is
-// optional: when empty, the gateway resolves it from the model id.
+// ModelRef identifies a specific model for the LLM engine. Provider is
+// optional: when empty, the engine resolves it from the model id.
 type ModelRef struct {
 	Provider string `json:"provider,omitempty"`
 	ID       string `json:"id"`
@@ -314,7 +314,7 @@ func (m ModelRef) String() string {
 	return fmt.Sprintf("%s/%s", m.Provider, m.ID)
 }
 
-// ModelInfo describes a model available via the Gateway.
+// ModelInfo describes a model available via the LLM engine.
 type ModelInfo struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name,omitempty"`
@@ -331,7 +331,7 @@ type GenerationConfig struct {
 	TopP        float64 `json:"top_p,omitempty"`
 }
 
-// TurnRequest is sent to the LLM Gateway for a single provider turn.
+// TurnRequest is sent to the LLM engine for a single provider turn.
 type TurnRequest struct {
 	Model            ModelRef         `json:"model"`
 	SystemPrompt     string           `json:"system_prompt"`
