@@ -1,0 +1,81 @@
+package tui
+
+import (
+	"context"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/lcoder/lcoder/pkg/contextmgr"
+	"github.com/lcoder/lcoder/pkg/events"
+	"github.com/lcoder/lcoder/pkg/models"
+)
+
+// EventMsg carries an agent event from the events bus into bubbletea.
+type EventMsg struct {
+	Event events.Event
+}
+
+// AgentDoneMsg signals that a Prompt run finished.
+type AgentDoneMsg struct {
+	Err error
+}
+
+// SendPromptMsg triggers a prompt submission.
+type SendPromptMsg struct {
+	Text string
+}
+
+// submitPromptCmd runs the agent in a goroutine.
+func submitPromptCmd(agent AgentRunner, sess SessionWriter, text string) tea.Cmd {
+	return func() tea.Msg {
+		msg := models.UserMessage(text)
+		if err := sess.Append(msg); err != nil {
+			return AgentDoneMsg{Err: err}
+		}
+		if err := agent.Prompt(context.Background(), msg); err != nil {
+			return AgentDoneMsg{Err: err}
+		}
+		return AgentDoneMsg{}
+	}
+}
+
+// continueAgentCmd continues the agent without adding a user message.
+func continueAgentCmd(agent AgentRunner) tea.Cmd {
+	return func() tea.Msg {
+		if err := agent.Continue(context.Background()); err != nil {
+			return AgentDoneMsg{Err: err}
+		}
+		return AgentDoneMsg{}
+	}
+}
+
+// waitForEventCmd blocks until an event arrives on the channel.
+func waitForEventCmd(ch <-chan events.Event) tea.Cmd {
+	return func() tea.Msg {
+		return EventMsg{Event: <-ch}
+	}
+}
+
+// AgentRunner abstracts the agent for TUI interaction.
+type AgentRunner interface {
+	Prompt(ctx context.Context, msg models.AgentMessage) error
+	Continue(ctx context.Context) error
+	AllMessages() []models.AgentMessage
+	SetMessages(msgs []models.AgentMessage)
+	Stats() map[string]int
+	Mode() string
+	Steer(msg models.AgentMessage) // follow-up while processing
+	Abort()                        // esc-to-interrupt
+	SwitchModel(ref models.ModelRef, budget contextmgr.TokenBudget)
+}
+
+// ModeSwitcher extends AgentRunner with mode switching capabilities.
+type ModeSwitcher interface {
+	AgentRunner
+	WithMode(mode string) AgentRunner
+}
+
+// SessionWriter abstracts session persistence.
+type SessionWriter interface {
+	Append(msg models.AgentMessage) error
+	SessionID() string
+}

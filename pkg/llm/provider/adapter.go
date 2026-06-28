@@ -1,0 +1,72 @@
+// pkg/llm/provider/adapter.go
+package provider
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/lcoder/lcoder/pkg/models"
+)
+
+// Adapter performs one provider call and streams normalized Events.
+// Implementations must close the returned channel when the stream ends and
+// must not block on a full channel after ctx is cancelled.
+type Adapter interface {
+	Stream(ctx context.Context, conn Conn, req models.TurnRequest) (<-chan Event, error)
+}
+
+// Conn holds the resolved connection settings for a single provider call.
+type Conn struct {
+	BaseURL string            // falls back to DefaultBaseURL(Route) when empty
+	APIKey  string            //
+	Route   string            // protocol family: openai | anthropic | gemini | ...
+	Headers map[string]string // extra headers (merged last)
+}
+
+// defaultBaseURLs maps a protocol route to its canonical base URL.
+var defaultBaseURLs = map[string]string{
+	"openai":     "https://api.openai.com/v1",
+	"deepseek":   "https://api.deepseek.com/v1",
+	"moonshot":   "https://api.moonshot.cn/v1",
+	"openrouter": "https://openrouter.ai/api/v1",
+	"gemini":     "https://generativelanguage.googleapis.com/v1beta/openai",
+	"anthropic":  "https://api.anthropic.com/v1",
+}
+
+// DefaultBaseURL returns the canonical base URL for a route, or "" if unknown.
+func DefaultBaseURL(route string) string {
+	return defaultBaseURLs[route]
+}
+
+// ResolveBaseURL returns conn.BaseURL when set, else the route default.
+func ResolveBaseURL(conn Conn) string {
+	if conn.BaseURL != "" {
+		return conn.BaseURL
+	}
+	return DefaultBaseURL(conn.Route)
+}
+
+// emit sends ev unless ctx is already cancelled (prevents goroutine leak on a
+// stalled consumer that has gone away).
+func emit(ctx context.Context, ch chan<- Event, ev Event) {
+	select {
+	case ch <- ev:
+	case <-ctx.Done():
+	}
+}
+
+// classifyHTTP maps a provider HTTP status + body to a normalized EventError.
+func classifyHTTP(status int, body []byte) *EventError {
+	code := "internal"
+	switch {
+	case status == 429:
+		code = "rate_limit"
+	case status == 401 || status == 403:
+		code = "auth"
+	case status == 400:
+		code = "bad_request"
+	}
+	pe := map[string]any{}
+	_ = json.Unmarshal(body, &pe)
+	return &EventError{Code: code, Message: string(body), ProviderError: pe}
+}

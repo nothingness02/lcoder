@@ -1,0 +1,199 @@
+package tui
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// toolResultEntry is the minimal record formatToolSummary needs.
+type toolResultEntry struct {
+	name    string
+	isError bool
+	content string
+}
+
+// toolKeyArg extracts the most meaningful argument from a tool's JSON args.
+func toolKeyArg(toolName string, argsJSON string) string {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &m); err != nil {
+		return truncate(argsJSON, 40)
+	}
+	var key string
+	switch toolName {
+	case "bash":
+		key = strVal(m, "command")
+	case "read", "write", "edit", "ls":
+		key = strVal(m, "path")
+	case "grep", "find":
+		key = strVal(m, "pattern")
+		if path := strVal(m, "path"); path != "" {
+			key += ", " + path
+		}
+	default:
+		for _, f := range []string{"query", "path", "url", "command", "name", "pattern"} {
+			if v := strVal(m, f); v != "" {
+				key = v
+				break
+			}
+		}
+	}
+	if key == "" {
+		return truncate(argsJSON, 40)
+	}
+	return truncate(key, 50)
+}
+
+var toolFriendlyLabels = map[string]string{
+	"bash":  "Running a command",
+	"read":  "Reading a file",
+	"write": "Writing a file",
+	"edit":  "Editing a file",
+	"grep":  "Searching in files",
+	"find":  "Finding files",
+	"ls":    "Listing files",
+}
+
+func friendlyToolLabel(name string) string {
+	if label, ok := toolFriendlyLabels[name]; ok {
+		return label
+	}
+	return name
+}
+
+func formatToolCallLabel(name, keyArg string) string {
+	label := friendlyToolLabel(name)
+	switch {
+	case label != name && keyArg != "":
+		return label + ": " + keyArg
+	case label != name:
+		return label
+	default:
+		return fmt.Sprintf("%s(%s)", name, keyArg)
+	}
+}
+
+func toolResultBrief(content string, elapsed time.Duration) string {
+	var parts []string
+	if elapsed > 100*time.Millisecond {
+		parts = append(parts, fmt.Sprintf("%.1fs", elapsed.Seconds()))
+	}
+	return strings.Join(parts, "  ")
+}
+
+// formatCompactToolResult renders the single-line tool result.
+func formatCompactToolResult(toolName, args string, isError bool, content string, elapsed time.Duration) string {
+	keyArg := toolKeyArg(toolName, args)
+	dimStyle := styleDim()
+	icon := styleSuccess().Render("✓")
+	brief := toolResultBrief(content, elapsed)
+	if isError {
+		icon = styleError().Render("✗")
+		brief = truncate(content, 60)
+	}
+	line := fmt.Sprintf("⏵ %s  %s", formatToolCallLabel(toolName, keyArg), icon)
+	if brief != "" {
+		line += "  " + brief
+	}
+	return dimStyle.Render(line)
+}
+
+const (
+	expandedHeadLines = 8
+	expandedTailLines = 4
+)
+
+// truncateHeadTail keeps the first head and last tail lines, eliding the middle.
+func truncateHeadTail(content string, head, tail int) string {
+	content = strings.TrimRight(content, "\n")
+	if content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) <= head+tail {
+		return strings.Join(lines, "\n")
+	}
+	hidden := len(lines) - head - tail
+	out := make([]string, 0, head+tail+1)
+	out = append(out, lines[:head]...)
+	out = append(out, fmt.Sprintf("… +%d lines", hidden))
+	out = append(out, lines[len(lines)-tail:]...)
+	return strings.Join(out, "\n")
+}
+
+// formatExpandedToolResult renders the Ctrl+O expanded view.
+func formatExpandedToolResult(toolName, args string, isError bool, content string, elapsed time.Duration) string {
+	compact := formatCompactToolResult(toolName, args, isError, content, elapsed)
+	dimStyle := styleDim()
+	bodyStyle := dimStyle
+	if isError {
+		bodyStyle = styleError()
+	}
+	var sb strings.Builder
+	sb.WriteString(compact)
+	sb.WriteString("\n")
+	sb.WriteString(dimStyle.Render("  Args: " + truncate(args, 200)))
+	body := truncateHeadTail(content, expandedHeadLines, expandedTailLines)
+	if body != "" {
+		label := "  Result:"
+		if isError {
+			label = "  Error:"
+		}
+		sb.WriteString("\n")
+		sb.WriteString(dimStyle.Render(label))
+		for _, ln := range strings.Split(body, "\n") {
+			sb.WriteString("\n")
+			sb.WriteString(bodyStyle.Render("  " + ln))
+		}
+	}
+	return sb.String()
+}
+
+// formatToolSummary renders a single collapsed summary line for a turn.
+func formatToolSummary(results []toolResultEntry) string {
+	total := len(results)
+	if total == 0 {
+		return ""
+	}
+	var errCount int
+	for _, r := range results {
+		if r.isError {
+			errCount++
+		}
+	}
+	dimStyle := styleDim()
+	okIcon := styleSuccess().Render("✓")
+	errIcon := styleError().Render("✗")
+	var line string
+	if errCount == 0 {
+		line = fmt.Sprintf("⏵ %d tools used  %s", total, okIcon)
+	} else {
+		line = fmt.Sprintf("⏵ %d tools used  %s%d %s%d", total, okIcon, total-errCount, errIcon, errCount)
+	}
+	return dimStyle.Render(line)
+}
+
+func strVal(m map[string]any, key string) string {
+	if v, ok := m[key]; ok {
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
+}
+
+// FormatArgs renders a tool's argument map as a compact JSON snippet for inline
+// display. (Relocated from toolpanel.go.)
+func FormatArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return ""
+	}
+	s := string(data)
+	if len(s) > 40 {
+		s = s[:37] + "..."
+	}
+	return s
+}

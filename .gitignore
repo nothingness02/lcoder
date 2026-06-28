@@ -1,0 +1,11 @@
+.worktrees/
+*.exe
+docs/
+reference/
+.claude/
+.superpowers/
+/lcoder
+/credentials.yaml
+.lcoder/credentials.yaml
+__pycache__/
+*.pyc

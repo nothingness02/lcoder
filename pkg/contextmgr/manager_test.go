@@ -1,0 +1,110 @@
+package contextmgr
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/lcoder/lcoder/pkg/models"
+)
+
+func TestManagerBuildTurnRequest(t *testing.T) {
+	mgr := NewManager(TokenBudget{
+		MaxTotal:      4000,
+		TargetTotal:   3000,
+		ReserveOutput: 1000,
+	}, WithSummarizer(func(msgs []models.AgentMessage) (string, error) {
+		return "summary", nil
+	}))
+
+	mgr.SetBlock(NewBlock(BlockSystem, "system", StabilityStatic, 100,
+		models.NewAgentMessage(models.RoleSystem, models.TextContent{Text: strings.Repeat("a", 400)}),
+	))
+	mgr.SetBlock(NewBlock(BlockProjectDocs, "docs", StabilityStable, 80,
+		models.NewAgentMessage(models.RoleSystem, models.TextContent{Text: strings.Repeat("b", 400)}),
+	))
+	mgr.SetBlock(NewBlock(BlockRecent, "recent", StabilityDynamic, 100,
+		models.UserMessage("hello"),
+		models.AssistantMessage("hi"),
+		models.UserMessage("what is the weather"),
+	))
+
+	req, err := mgr.BuildTurnRequest(models.ModelRef{Provider: "openai", ID: "gpt-4o"}, nil)
+	if err != nil {
+		t.Fatalf("build turn request: %v", err)
+	}
+
+	if !strings.Contains(req.SystemPrompt, "aaaaaaaa") {
+		t.Fatalf("expected system prompt to contain static block")
+	}
+	if !strings.Contains(req.SystemPrompt, "bbbbbbbb") {
+		t.Fatalf("expected system prompt to contain docs block")
+	}
+	if len(req.Messages) == 0 {
+		t.Fatalf("expected messages")
+	}
+}
+
+func TestWindowCompaction(t *testing.T) {
+	mgr := NewManager(TokenBudget{
+		MaxTotal:      2000,
+		TargetTotal:   1500,
+		ReserveOutput: 500,
+	}, WithSummarizer(func(msgs []models.AgentMessage) (string, error) {
+		return "compacted", nil
+	}), WithWindowPolicy(DefaultKeepRecentInBudget()))
+
+	mgr.SetBlock(NewBlock(BlockSystem, "system", StabilityStatic, 100,
+		models.NewAgentMessage(models.RoleSystem, models.TextContent{Text: strings.Repeat("a", 800)}),
+	))
+
+	var recent []models.AgentMessage
+	for i := 0; i < 20; i++ {
+		recent = append(recent, models.UserMessage(strings.Repeat("u", 200)))
+		recent = append(recent, models.AssistantMessage(strings.Repeat("a", 200)))
+	}
+	mgr.SetBlock(NewBlock(BlockRecent, "recent", StabilityDynamic, 100, recent...))
+
+	req, err := mgr.BuildTurnRequest(models.ModelRef{Provider: "openai", ID: "gpt-4o"}, nil)
+	if err != nil {
+		t.Fatalf("build turn request: %v", err)
+	}
+
+	if len(req.Messages) == 0 {
+		t.Fatal("expected some messages after compaction")
+	}
+
+	// Ensure a user message is retained somewhere in recent messages.
+	var foundUser bool
+	for _, m := range req.Messages {
+		if m.Role == models.RoleUser {
+			foundUser = true
+			break
+		}
+	}
+	if !foundUser {
+		t.Fatal("expected at least one user message to be retained")
+	}
+
+	// Should have compacted summary as first message.
+	if req.Messages[0].Role != models.RoleSystem {
+		t.Fatalf("expected first message to be summary system, got %s", req.Messages[0].Role)
+	}
+}
+
+func TestStats(t *testing.T) {
+	mgr := NewManager(TokenBudget{MaxTotal: 1000})
+	mgr.SetBlock(NewBlock(BlockSystem, "system", StabilityStatic, 100,
+		models.NewAgentMessage(models.RoleSystem, models.TextContent{Text: strings.Repeat("x", 400)}),
+	))
+	mgr.SetBlock(NewBlock(BlockRecent, "recent", StabilityDynamic, 100,
+		models.UserMessage("hi"),
+	))
+
+	stats := mgr.Stats()
+	if stats["total"] == 0 {
+		t.Fatal("expected non-zero total tokens")
+	}
+	if stats["budget_max"] != 1000 {
+		t.Fatalf("expected budget_max 1000, got %d", stats["budget_max"])
+	}
+}

@@ -1,0 +1,117 @@
+# Example Lcoder configuration
+# Copy to ~/.lcoder/config.yaml or pass via --config
+
+provider: "openai"
+model: "gpt-4o-mini"
+
+tui:
+  theme: dark  # or light
+
+# Provider connection layer (optional). Lets Lcoder reach custom
+# OpenAI-compatible endpoints (region-specific bases, relays, self-hosted)
+# via the in-process engine. {env:VAR} is interpolated from the environment
+# at startup. Omit this block to use each provider's default base URL.
+# providers:
+#   moonshot:                              # Kimi via the China endpoint
+#     base_url: "https://api.moonshot.cn/v1"
+#     api_key: "{env:MOONSHOT_API_KEY}"
+#   dashscope:                             # Qwen (LiteLLM-native prefix)
+#     api_key: "{env:DASHSCOPE_API_KEY}"
+#   myrelay:                               # any OpenAI-compatible relay
+#     route: openai                        # ride litellm's openai protocol
+#     base_url: "https://api.relay.com/v1"
+#     api_key: "{env:RELAY_KEY}"
+#     headers:
+#       X-Title: lcoder
+
+# API keys 不写在本文件。优先级:config.providers.<name>.api_key (手写,含 {env:VAR})
+#   > ~/.lcoder/credentials.yaml (TUI 写入,0600) > 标准环境变量 (如 OPENAI_API_KEY)。
+# credentials.yaml 示例:
+#   openai:
+#     api_key: sk-...
+#   moonshot:
+#     api_key: sk-...
+#     base_url: https://api.moonshot.cn/v1
+# provider 字段可省略 model 的归属:Lcoder 会按 model id 自行解析 provider 并路由。
+
+# TUI 配置:首次启动若当前 provider 无可用 key,会自动弹出向导
+# (选 provider -> 选 model -> 输入 api_key);运行中用 /provider 重新配置或切换模型。
+# 向导写入的 api_key 保存到 ~/.lcoder/credentials.yaml(0600);切换的 model 立即对
+# 当前会话生效(重启后仍以本文件的 provider/model 为默认)。
+
+# Structured context manager configuration.
+# Window size is auto-discovered: leave max_tokens/target_tokens/reserve_output
+# empty (or 0) and Lcoder reads the model's context window from the model
+# catalog (models.dev). To pin a window for a model the catalog does not know,
+# declare it in models.yaml (context_window / budget) — that takes precedence.
+# Set max_tokens here only to force a global override for every model.
+context:
+  mode: auto               # auto | manual | off
+  # max_tokens: 128000     # leave empty = auto from model; set to force-override
+  # target_tokens: 120000  # leave empty = derived as max_tokens * 0.9
+  # reserve_output: 8192   # leave empty = default 8192
+  static_ratio: 60         # target percentage for static/stable blocks
+  min_recent: 10           # minimum recent messages to keep
+  auto_compact: true       # enable automatic compaction
+  compact_threshold: 0.9   # compact when usage reaches this ratio of target_tokens
+  cache_hint_policy: default  # default | aggressive | none
+
+permissions:
+  rules:
+    read:
+      "*": allow
+    write:
+      "*": allow
+    edit:
+      "*": allow
+    ls:
+      "*": allow
+    grep:
+      "*": allow
+    find:
+      "*": allow
+    bash:
+      "*": ask
+      "git *": allow
+      "go test *": allow
+
+# http_tools:
+#   - name: deploy
+#     endpoint: http://localhost:9001/deploy
+#     description: Deploy service to staging
+#     parameters:
+#       type: object
+#       properties:
+#         service:
+#           type: string
+#       required: [service]
+#     execution_mode: parallel
+#     headers:
+#       Authorization: Bearer ${DEPLOY_TOKEN}
+
+# mcp_servers:
+#   - name: filesystem
+#     command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."]
+#     env:
+#       NODE_ENV: production
+
+# Declarative hooks.
+# hooks:
+#   audit:
+#     enabled: true
+#   sensitive_file_check:
+#     enabled: true
+#     patterns: ["*.env", "*.key", "*.pem"]
+#   bash_denylist:
+#     enabled: true
+#     patterns: ["rm -rf /", "mkfs.*"]
+
+# Installed packages and Go extensions.
+# packages:
+#   - name: acme-modes
+#     path: ~/.lcoder/packages/acme-modes
+# extensions:
+#   - name: acme-tools
+#     source: github.com/acme/lcoder-ext-tools
+#     config:
+#       api_key: ${ACME_API_KEY}

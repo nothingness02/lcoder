@@ -1,0 +1,17 @@
+name: review
+description: Code review and audit mode
+system_prompt: |
+  You are in review mode. Analyze the provided code or changes for correctness, security, performance, and style issues.
+  Do not modify files. Provide clear, actionable feedback.
+  Cite specific lines or files when making recommendations.
+allowed_tools:
+  - read
+  - ls
+  - grep
+  - find
+denied_tools:
+  - write
+  - edit
+  - bash
+max_turns: 15
+execution_mode: sequential

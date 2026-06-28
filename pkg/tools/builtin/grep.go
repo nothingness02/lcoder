@@ -1,0 +1,107 @@
+package builtin
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/tools"
+)
+
+// Grep searches file contents for a pattern.
+type Grep struct {
+	cwd string
+}
+
+// NewGrep creates a grep tool.
+func NewGrep(cwd string) tools.Executable {
+	return &Grep{cwd: cwd}
+}
+
+func (g *Grep) Definition() models.ToolDefinition {
+	return models.ToolDefinition{
+		Name:        "grep",
+		Description: "Search for a literal string in files under a directory.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"pattern": map[string]any{
+					"type":        "string",
+					"description": "Text pattern to search for",
+				},
+				"path": map[string]any{
+					"type":        "string",
+					"description": "Directory or file to search (default cwd)",
+				},
+				"glob": map[string]any{
+					"type":        "string",
+					"description": "Glob pattern to filter files, e.g. '*.go'",
+				},
+			},
+			"required": []string{"pattern"},
+		},
+		ExecutionMode: models.ExecutionParallel,
+	}
+}
+
+func (g *Grep) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+	pattern, ok := args["pattern"].(string)
+	if !ok || pattern == "" {
+		return models.ToolResult{}, fmt.Errorf("missing pattern")
+	}
+
+	path := g.cwd
+	if v, ok := args["path"].(string); ok && v != "" {
+		path = v
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(g.cwd, path)
+	}
+	path = filepath.Clean(path)
+
+	var glob string
+	if v, ok := args["glob"].(string); ok {
+		glob = v
+	}
+
+	var matches []string
+	err := filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if glob != "" {
+			matched, _ := filepath.Match(glob, filepath.Base(p))
+			if !matched {
+				return nil
+			}
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			if strings.Contains(line, pattern) {
+				rel, _ := filepath.Rel(g.cwd, p)
+				matches = append(matches, fmt.Sprintf("%s:%d:%s", rel, i+1, line))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return models.ToolResult{}, err
+	}
+
+	return models.ToolResult{
+		Content: []models.ContentPart{models.TextContent{Text: strings.Join(matches, "\n")}},
+		Details: map[string]any{"path": path, "matches": len(matches)},
+	}, nil
+}
+
+var _ tools.Executable = (*Grep)(nil)

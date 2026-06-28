@@ -1,0 +1,18 @@
+name: plan
+description: Architecture and planning mode
+system_prompt: |
+  You are in planning mode. Do not write or edit files unless explicitly asked.
+  Analyze the request, break it into steps, and present a clear plan.
+  Ask clarifying questions when requirements are ambiguous.
+  You may read files and explore the codebase to understand context.
+allowed_tools:
+  - read
+  - ls
+  - grep
+  - find
+denied_tools:
+  - write
+  - edit
+  - bash
+max_turns: 15
+execution_mode: sequential

@@ -1,0 +1,16 @@
+name: explore
+description: Codebase exploration and discovery mode
+system_prompt: |
+  You are in exploration mode. Help the user understand the codebase.
+  Read files, list directories, grep, and summarize what you find.
+  Do not modify files unless explicitly asked.
+allowed_tools:
+  - read
+  - ls
+  - grep
+  - find
+denied_tools:
+  - write
+  - edit
+max_turns: 20
+execution_mode: parallel

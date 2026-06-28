@@ -1,0 +1,105 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestLoadCredentialsMissingReturnsEmpty(t *testing.T) {
+	creds, err := LoadCredentials(filepath.Join(t.TempDir(), "nope.yaml"))
+	if err != nil {
+		t.Fatalf("missing file should not error: %v", err)
+	}
+	if len(creds) != 0 {
+		t.Fatalf("expected empty, got %+v", creds)
+	}
+}
+
+func TestLoadCredentialsParses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.yaml")
+	body := "openai:\n  api_key: sk-open\nmoonshot:\n  api_key: sk-moon\n  base_url: https://api.moonshot.cn/v1\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	creds, err := LoadCredentials(path)
+	if err != nil {
+		t.Fatalf("LoadCredentials: %v", err)
+	}
+	if creds["openai"].APIKey != "sk-open" {
+		t.Fatalf("openai key wrong: %+v", creds["openai"])
+	}
+	if creds["moonshot"].BaseURL != "https://api.moonshot.cn/v1" {
+		t.Fatalf("moonshot base wrong: %+v", creds["moonshot"])
+	}
+}
+
+func TestMergeCredentialsFillsGapsWithoutOverriding(t *testing.T) {
+	providers := map[string]ProviderConn{
+		"openai": {APIKey: "from-config"}, // hand-written wins
+	}
+	creds := map[string]ProviderConn{
+		"openai":   {APIKey: "from-creds", BaseURL: "https://x"},
+		"moonshot": {APIKey: "sk-moon"},
+	}
+	out := mergeCredentials(providers, creds)
+	if out["openai"].APIKey != "from-config" {
+		t.Fatalf("config api_key must win, got %q", out["openai"].APIKey)
+	}
+	if out["openai"].BaseURL != "https://x" {
+		t.Fatalf("missing base_url should be filled from creds, got %q", out["openai"].BaseURL)
+	}
+	if out["moonshot"].APIKey != "sk-moon" {
+		t.Fatalf("new provider should be added, got %+v", out["moonshot"])
+	}
+}
+
+func TestCredentialsPathExported(t *testing.T) {
+	// Exported accessor must return the same value as the internal resolver.
+	if CredentialsPath() != resolveCredentialsPath() {
+		t.Fatalf("CredentialsPath()=%q != resolveCredentialsPath()=%q", CredentialsPath(), resolveCredentialsPath())
+	}
+}
+
+func TestProviderHasKey(t *testing.T) {
+	cfg := Config{Providers: map[string]ProviderConn{
+		"openai": {APIKey: "sk-config"},
+	}}
+
+	// Key present in merged config.providers.
+	if !ProviderHasKey(cfg, "openai") {
+		t.Fatal("expected openai to have a key from config.providers")
+	}
+
+	// No config key, no env -> false.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	if ProviderHasKey(cfg, "anthropic") {
+		t.Fatal("expected anthropic to lack a key")
+	}
+
+	// No config key, but standard env var set -> true.
+	t.Setenv("ANTHROPIC_API_KEY", "sk-env")
+	if !ProviderHasKey(cfg, "anthropic") {
+		t.Fatal("expected anthropic to have a key via env var")
+	}
+
+	// Unknown provider with no config/env -> false (no panic).
+	if ProviderHasKey(cfg, "mystery") {
+		t.Fatal("expected unknown provider to lack a key")
+	}
+}
+
+func TestSaveCredentialsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "credentials.yaml")
+	in := map[string]ProviderConn{"openai": {APIKey: "sk"}}
+	if err := SaveCredentials(path, in); err != nil {
+		t.Fatalf("SaveCredentials: %v", err)
+	}
+	out, err := LoadCredentials(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if out["openai"].APIKey != "sk" {
+		t.Fatalf("round trip mismatch: %+v", out)
+	}
+}

@@ -1,0 +1,201 @@
+package tui
+
+import (
+	"context"
+
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/lcoder/lcoder/pkg/agent"
+	"github.com/lcoder/lcoder/pkg/config"
+	"github.com/lcoder/lcoder/pkg/events"
+	"github.com/lcoder/lcoder/pkg/llm"
+	"github.com/lcoder/lcoder/pkg/mcp"
+	"github.com/lcoder/lcoder/pkg/skills"
+)
+
+// uiState is the explicit state-machine enum for the top-level model.
+type uiState int
+
+const (
+	stateStartup uiState = iota
+	stateInput
+	stateProcessing
+	stateSessionPicker
+	stateExtensions
+	stateProvider
+)
+
+// Model is the single top-level bubbletea model for the Lcoder TUI.
+type Model struct {
+	width, height int
+	cwd           string
+
+	agent   AgentRunner
+	session SessionWriter
+	store   SessionStore
+	bus     *events.Bus
+
+	unsubscribe func()
+	eventCh     chan events.Event
+
+	state uiState
+
+	// Conversation history, rebuilt into the viewport each frame.
+	blocks   []block
+	viewport viewport.Model
+
+	// Streaming state for the in-flight assistant message.
+	streaming   bool
+	streamLive  string
+	streamMsgID string
+	turnTools   []toolResultEntry
+
+	input   InputModel
+	spinner spinner
+	paste   *pasteStash
+	history *inputHistory
+
+	// Slash menu (inline dropdown over the composer within stateInput).
+	menuVisible  bool
+	menuSelected int
+
+	// File mention menu (@-triggered file picker within stateInput).
+	fileMenuVisible  bool
+	fileMenuSelected int
+	fileMenuItems    []string
+
+	// Command output panel (ephemeral, above the composer within stateInput).
+	cmdPanel cmdPanel
+
+	// Overlays (reused from existing files).
+	picker   SessionPickerModel
+	extPanel ExtensionsPanelModel
+
+	toolsExpanded bool
+
+	header      headerInfo
+	headerFrame int
+
+	model      string
+	themeStyle string
+	totalCost  float64
+	errMsg     string
+
+	// capabilities of the active model, shown in /status (from the catalog).
+	capabilities []string
+
+	skills      []skills.Skill
+	modeManager *agent.ModeManager
+
+	// Provider-config wizard dependencies and state.
+	llmClient          *llm.Client
+	cfg                config.Config
+	provPanel          providerPanel
+	needsProviderSetup bool
+
+	// suggestion (ghost text) state.
+	completedTurns int
+	suggestion     string
+}
+
+// NewModel keeps the exact signature the call sites and tests rely on.
+func NewModel(bus *events.Bus, ag AgentRunner, session SessionWriter, store SessionStore, cwd, sessionID, model, themeStyle string, httpTools []HTTPToolItem, mcpRegistry *mcp.Registry, modeManager *agent.ModeManager, llmClient *llm.Client, cfg config.Config, needsProviderSetup bool, loadedSkills ...skills.Skill) *Model {
+	// Theme override: honor explicit "light"/"dark", else auto-detect.
+	switch themeStyle {
+	case "light":
+		darkBgOnce.Do(func() { darkBg = false })
+	case "dark":
+		darkBgOnce.Do(func() { darkBg = true })
+	}
+	warmBackgroundColor()
+
+	vp := viewport.New(80, 15)
+	m := &Model{
+		agent:              ag,
+		session:            session,
+		store:              store,
+		cwd:                cwd,
+		bus:                bus,
+		eventCh:            make(chan events.Event, 64),
+		state:              stateStartup,
+		viewport:           vp,
+		input:              NewInputModel(),
+		spinner:            newSpinner(),
+		paste:              newPasteStash(),
+		history:            newInputHistory(),
+		extPanel:           ExtensionsPanelModel{HTTPTools: httpTools, MCPServers: mcpServers(mcpRegistry)},
+		model:              model,
+		themeStyle:         themeStyle,
+		skills:             loadedSkills,
+		modeManager:        modeManager,
+		llmClient:          llmClient,
+		cfg:                cfg,
+		needsProviderSetup: needsProviderSetup,
+		header:             headerInfo{model: model, cwd: cwd, version: "0.1"},
+	}
+	m.unsubscribe = bus.Subscribe(m.onEvent)
+	if needsProviderSetup {
+		m.openProviderPanel()
+	}
+	return m
+}
+
+// SetCapabilities records the active model's catalog capabilities for /status.
+func (m *Model) SetCapabilities(caps []string) {
+	m.capabilities = caps
+}
+
+// Init implements tea.Model.
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(
+		waitForEventCmd(m.eventCh),
+		headerTick(),
+	)
+}
+
+// onEvent is the events.Bus callback; forwards events to the channel the UI drains.
+func (m *Model) onEvent(ctx context.Context, ev events.Event) error {
+	select {
+	case m.eventCh <- ev:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+// Close cleans up the event subscription.
+func (m *Model) Close() {
+	if m.unsubscribe != nil {
+		m.unsubscribe()
+	}
+}
+
+// appendBlock adds a block and marks the viewport dirty.
+func (m *Model) appendBlock(b block) {
+	m.blocks = append(m.blocks, b)
+	m.rebuildViewport()
+}
+
+// addSystem appends a dim system line.
+func (m *Model) addSystem(text string) {
+	m.appendBlock(block{kind: blockSystem, raw: text})
+}
+
+// addUser appends a full-width user bar, tagging any resolvable @file mentions
+// as attachments shown beneath the bar.
+func (m *Model) addUser(text string) {
+	m.appendBlock(block{kind: blockUser, raw: text, attachments: mentionLabels(m.cwd, text)})
+}
+
+// updateSizes recomputes layout after a resize.
+func (m *Model) updateSizes() {
+	m.input.SetWidth(m.width - 2)
+	m.input.SyncHeight()
+	bottom := m.bottomHeight()
+	vh := m.height - bottom
+	if vh < 3 {
+		vh = 3
+	}
+	m.viewport.Width = m.width
+	m.viewport.Height = vh
+	m.rebuildViewport()
+}
