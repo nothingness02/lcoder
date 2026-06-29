@@ -333,6 +333,11 @@ func runOneShot(ctx context.Context, setup *agentSetup, prompt string) error {
 	// Persist after each assistant/tool message turn.
 	persistHandler := func(ctx context.Context, ev events.Event) error {
 		switch ev.(type) {
+		case events.CompactionCommittedEvent:
+			// Compaction committed in the manager: reset the on-disk session to
+			// the compacted runtime state (summary + recent tail), discarding the
+			// older raw messages.
+			_ = setup.sess.Replace(setup.ag.AllMessages())
 		case events.MessageEndEvent, events.ToolExecutionEndEvent, events.AgentEndEvent:
 			_ = setup.sess.Save()
 		}
@@ -401,6 +406,8 @@ func runTUI(ctx context.Context, setup *agentSetup) error {
 	// Persist after each assistant/tool message turn.
 	persistHandler := func(ctx context.Context, ev events.Event) error {
 		switch ev.(type) {
+		case events.CompactionCommittedEvent:
+			_ = setup.sess.Replace(setup.ag.AllMessages())
 		case events.MessageEndEvent, events.ToolExecutionEndEvent, events.AgentEndEvent:
 			_ = setup.sess.Save()
 		}
