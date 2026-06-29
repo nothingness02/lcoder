@@ -6,6 +6,7 @@ import (
 
 	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/tools"
 )
 
 func (a *Agent) executeToolCalls(ctx context.Context, turn int, assistantMsg models.AgentMessage, calls []models.ToolCallContent) ([]models.AgentMessage, bool) {
@@ -77,18 +78,29 @@ func (a *Agent) executeParallel(ctx context.Context, turn int, assistantMsg mode
 }
 
 func (a *Agent) executeOneToolCall(ctx context.Context, turn int, assistantMsg models.AgentMessage, call models.ToolCallContent) models.AgentMessage {
+	// Normalize arguments first so validation sees a non-nil map.
+	args := call.Arguments
+	if args == nil {
+		args = make(map[string]any)
+	}
+
+	// Pre-execution argument validation. On failure we do NOT emit any tool
+	// events: the failed attempt stays invisible in the live TUI, and the error
+	// tool_result is fed back so the LLM can self-correct next turn. Unknown
+	// tools fall through to the normal path below (handled by registry.Execute),
+	// since that is not a parameter error.
+	if exec, ok := a.registry.Get(call.Name); ok {
+		if err := tools.ValidateArgs(exec.Definition(), args); err != nil {
+			return a.makeToolResultMessage(call, models.NewToolResultError(err.Error()), true)
+		}
+	}
+
 	_ = a.bus.Emit(ctx, events.ToolExecutionStartEvent{
 		Base:       events.Base{Type: events.ToolExecutionStart, Turn: turn},
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
 		Args:       call.Arguments,
 	})
-
-	// Validate / prepare arguments.
-	args := call.Arguments
-	if args == nil {
-		args = make(map[string]any)
-	}
 
 	// Permission check via hook.
 	if a.cfg.BeforeToolCall != nil {
