@@ -8,6 +8,28 @@ import (
 	"github.com/lcoder/lcoder/pkg/models"
 )
 
+// TestAnthropicMessagesSystemBecomesUser guards against silently dropping a
+// system-role message that appears in the conversation stream (the transient
+// compaction summary). The Anthropic messages array has no system role, so it
+// must be transmitted as a user turn rather than discarded.
+func TestAnthropicMessagesSystemBecomesUser(t *testing.T) {
+	msgs := []models.AgentMessage{
+		models.NewAgentMessage(models.RoleSystem, models.TextContent{Text: "[Summary of earlier conversation]"}),
+		models.NewAgentMessage(models.RoleUser, models.TextContent{Text: "next"}),
+	}
+	got := anthropicMessages(msgs)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages, got %d: %v", len(got), got)
+	}
+	if got[0]["role"] != "user" {
+		t.Fatalf("summary message must be a user turn, got role %v", got[0]["role"])
+	}
+	blocks, ok := got[0]["content"].([]map[string]any)
+	if !ok || len(blocks) != 1 || blocks[0]["text"] != "[Summary of earlier conversation]" {
+		t.Fatalf("summary text not preserved: %v", got[0]["content"])
+	}
+}
+
 func TestAnthropicStreamTextThinkingUsage(t *testing.T) {
 	body := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
 		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\"}}\n\n" +

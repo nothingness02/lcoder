@@ -225,13 +225,18 @@ func applyAnthropicUsage(cur *models.LLMUsage, u *anthropicUsage) *models.LLMUsa
 
 // --- request body helpers ---
 
-// anthropicMessages converts agent messages to Anthropic message blocks,
-// skipping system messages (handled separately via anthropicSystem).
+// anthropicMessages converts agent messages to Anthropic message blocks. The
+// top-level system prompt is handled separately via anthropicSystem, but a
+// system-role message can still appear inside the conversation stream (e.g. the
+// transient compaction summary produced by the context manager). The Anthropic
+// messages array only permits the "user" and "assistant" roles, so such a
+// message is emitted as a user turn rather than dropped — the API merges
+// consecutive same-role turns, so this never breaks role alternation.
 func anthropicMessages(msgs []models.AgentMessage) []map[string]any {
 	out := []map[string]any{}
 	for _, m := range msgs {
 		switch m.Role {
-		case models.RoleUser:
+		case models.RoleUser, models.RoleSystem:
 			out = append(out, map[string]any{"role": "user", "content": anthropicUserContent(m.Content)})
 		case models.RoleAssistant:
 			out = append(out, map[string]any{"role": "assistant", "content": anthropicAssistantContent(m.Content)})

@@ -175,6 +175,11 @@ func (m *Model) handleProviderKey(k tea.KeyMsg) (*Model, tea.Cmd) {
 
 // handleInputKey handles keys while composing.
 func (m *Model) handleInputKey(k tea.KeyMsg) (*Model, tea.Cmd) {
+	if k.Type == tea.KeyCtrlT {
+		m.toggleTaskSidebar()
+		return m, nil
+	}
+
 	// Command panel (ephemeral output) intercepts keys while visible.
 	if m.cmdPanel.visible {
 		switch m.cmdPanel.kind {
@@ -308,6 +313,9 @@ func (m *Model) handleProcessingKey(k tea.KeyMsg) (*Model, tea.Cmd) {
 	case tea.KeyCtrlO:
 		m.toolsExpanded = !m.toolsExpanded
 		m.rebuildViewport()
+		return m, nil
+	case tea.KeyCtrlT:
+		m.toggleTaskSidebar()
 		return m, nil
 	case tea.KeyEnter:
 		// Follow-up while processing: steer the running agent.
@@ -491,6 +499,8 @@ func (m *Model) dispatchSlash(text string) tea.Cmd {
 	case "tools":
 		m.toolsExpanded = !m.toolsExpanded
 		m.rebuildViewport()
+	case "tasks":
+		m.toggleTaskSidebar()
 	case "mode":
 		m.switchMode(strings.TrimSpace(sc.Args))
 	case "modes":
@@ -628,15 +638,17 @@ func (m *Model) retryLast() tea.Cmd {
 	return m.startPrompt(lastUser)
 }
 
-// loadSession replaces history with a stored session's messages.
+// loadSession replaces history with a stored session's messages and rebuilds the
+// task sidebar from the latest todo_write call in that history.
 func (m *Model) loadSession(sess *session.Session) {
 	if sess == nil {
 		return
 	}
 	msgs := sess.ActiveMessages()
 	m.blocks = blocksFromMessages(msgs)
+	m.tasks = tasksFromMessages(msgs)
 	m.agent.SetMessages(msgs)
-	m.rebuildViewport()
+	m.updateSizes()
 }
 
 // openSessionPicker switches to the picker overlay.

@@ -30,6 +30,24 @@ func TestRenderToolBlockCompactVsExpanded(t *testing.T) {
 	}
 }
 
+func TestRenderAssistantThinkingCompactVsExpanded(t *testing.T) {
+	thinking := "line one\nline two\nline three with a lot of extra detail that only matters when fully expanded"
+	b := block{kind: blockAssistant, raw: "answer", thinking: thinking}
+	compact := b.render(80, false)
+	expanded := b.render(80, true)
+	if compact == expanded {
+		t.Fatal("expanded thinking should differ from compact")
+	}
+	// Compact preview collapses newlines into a single line.
+	if strings.Contains(compact, "line one\nline two") {
+		t.Fatalf("compact thinking should collapse newlines: %q", compact)
+	}
+	// Expanded view preserves the full multi-line trace.
+	if !strings.Contains(expanded, "line two") || !strings.Contains(expanded, "line three") {
+		t.Fatalf("expanded thinking should show full trace: %q", expanded)
+	}
+}
+
 func TestRenderSystemBlock(t *testing.T) {
 	b := block{kind: blockSystem, raw: "switched mode"}
 	if out := b.render(80, false); !strings.Contains(out, "switched mode") {

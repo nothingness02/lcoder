@@ -145,7 +145,7 @@ func (p *KeepRecentInBudget) compactRecent(b *Block, budget int, mgr *Manager) (
 	}
 
 	older := b.Messages[:len(b.Messages)-keep]
-	recent := b.Messages[len(b.Messages)-keep:]
+	recent := stripLeadingOrphanToolResults(b.Messages[len(b.Messages)-keep:])
 
 	if len(older) == 0 {
 		return NewBlock(BlockRecent, b.Name, StabilityDynamic, b.Priority, recent...), nil
@@ -185,7 +185,25 @@ func (p *KeepRecentInBudget) keepTail(b *Block, budget int, mgr *Manager) *Block
 	if start >= len(b.Messages) {
 		return NewBlock(b.Kind, b.Name, b.Stability, b.Priority)
 	}
-	return NewBlock(b.Kind, b.Name, b.Stability, b.Priority, b.Messages[start:]...)
+	kept := stripLeadingOrphanToolResults(b.Messages[start:])
+	return NewBlock(b.Kind, b.Name, b.Stability, b.Priority, kept...)
+}
+
+// stripLeadingOrphanToolResults removes tool_result messages at the very front
+// of a truncated/compacted tail. Their matching tool_use lives in the messages
+// that were cut off ahead of the tail, so they would arrive at the provider as
+// orphan tool_results — which Anthropic rejects with a 400. Any leading run of
+// tool_result messages is necessarily orphaned (a paired tool_result is always
+// preceded by its assistant tool_use, which would also be in the tail).
+func stripLeadingOrphanToolResults(msgs []models.AgentMessage) []models.AgentMessage {
+	start := 0
+	for start < len(msgs) && msgs[start].Role == models.RoleToolResult {
+		start++
+	}
+	if start == 0 {
+		return msgs
+	}
+	return msgs[start:]
 }
 
 func (p *KeepRecentInBudget) ensureLastUser(blocks []*Block, mgr *Manager) ([]*Block, error) {

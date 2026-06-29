@@ -103,3 +103,53 @@ func TestSaveCredentialsRoundTrip(t *testing.T) {
 		t.Fatalf("round trip mismatch: %+v", out)
 	}
 }
+
+// setTempHome points os.UserHomeDir() at a fresh temp dir on every platform.
+func setTempHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)        // unix
+	t.Setenv("USERPROFILE", home) // windows
+	return home
+}
+
+func TestSaveProviderSelectionPersistsThroughLoad(t *testing.T) {
+	setTempHome(t)
+	if err := SaveProviderSelection("deepseek", "deepseek-chat"); err != nil {
+		t.Fatalf("SaveProviderSelection: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Provider != "deepseek" || cfg.Model != "deepseek-chat" {
+		t.Fatalf("expected persisted provider/model, got %q/%q", cfg.Provider, cfg.Model)
+	}
+}
+
+func TestSaveProviderSelectionPreservesExistingKeys(t *testing.T) {
+	home := setTempHome(t)
+	path := filepath.Join(home, ".lcoder", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	existing := "provider: openai\nmodel: gpt-4o-mini\ntui:\n  theme: light\n"
+	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	if err := SaveProviderSelection("deepseek", "deepseek-chat"); err != nil {
+		t.Fatalf("SaveProviderSelection: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Provider != "deepseek" || cfg.Model != "deepseek-chat" {
+		t.Fatalf("expected updated provider/model, got %q/%q", cfg.Provider, cfg.Model)
+	}
+	if cfg.TUI.Theme != "light" {
+		t.Fatalf("expected tui.theme preserved as 'light', got %q", cfg.TUI.Theme)
+	}
+}

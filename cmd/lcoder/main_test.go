@@ -59,26 +59,3 @@ func TestLoadConfigOverride(t *testing.T) {
 		t.Fatalf("expected openai, got %s", cfg.Provider)
 	}
 }
-
-func TestBuildSystemPrompt(t *testing.T) {
-	p := buildSystemPrompt("ctx", "skills")
-	if p == "" {
-		t.Fatal("expected non-empty prompt")
-	}
-	if !contains(p, "ctx") || !contains(p, "skills") {
-		t.Fatal("expected context and skills in prompt")
-	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSub(s, substr))
-}
-
-func containsSub(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

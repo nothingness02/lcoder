@@ -8,6 +8,43 @@ import (
 	"github.com/lcoder/lcoder/pkg/models"
 )
 
+// A compacted/truncated tail must never begin with a tool_result whose matching
+// tool_use was cut off, since Anthropic rejects an orphan tool_result. The
+// window policy strips such leading orphans.
+func TestWindowStripsLeadingOrphanToolResult(t *testing.T) {
+	orphan := models.NewAgentMessage(models.RoleToolResult,
+		models.ToolResultContent{ToolCallID: "x", Content: []models.ContentPart{models.TextContent{Text: "orphan result"}}})
+
+	msgs := []models.AgentMessage{
+		orphan,
+		orphan,
+		models.UserMessage("real user turn"),
+		models.AssistantMessage("reply"),
+	}
+	got := stripLeadingOrphanToolResults(msgs)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages after stripping orphans, got %d", len(got))
+	}
+	if got[0].Role != models.RoleUser {
+		t.Fatalf("expected tail to start with a user message, got %v", got[0].Role)
+	}
+}
+
+// A paired tool_result (preceded by its assistant tool_use within the tail)
+// must be preserved.
+func TestWindowKeepsPairedToolResult(t *testing.T) {
+	msgs := []models.AgentMessage{
+		models.NewAgentMessage(models.RoleAssistant,
+			models.ToolCallContent{ID: "x", Name: "read", Arguments: map[string]any{}}),
+		models.NewAgentMessage(models.RoleToolResult,
+			models.ToolResultContent{ToolCallID: "x", Content: []models.ContentPart{models.TextContent{Text: "ok"}}}),
+	}
+	got := stripLeadingOrphanToolResults(msgs)
+	if len(got) != 2 || got[0].Role != models.RoleAssistant {
+		t.Fatalf("paired tool_use/tool_result must be kept intact, got %v", got)
+	}
+}
+
 // When the summarizer fails, compaction must degrade to truncation rather than
 // propagating a fatal error, so the turn can still be built.
 func TestWindowCompactionFallsBackOnSummarizerError(t *testing.T) {

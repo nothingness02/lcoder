@@ -242,6 +242,14 @@ func (m *Model) commitProvider() {
 	// Recompute the budget for the new model and switch the live agent.
 	m.cfg.Provider = provName
 	m.cfg.Model = modelID
+
+	// Persist the selection so the next launch uses this provider (whose key is
+	// now in credentials.yaml) instead of re-firing the first-launch wizard.
+	if err := config.SaveProviderSelection(provName, modelID); err != nil {
+		p.errMsg = "保存 config 失败: " + err.Error()
+		return
+	}
+
 	window := 0
 	if m.llmClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

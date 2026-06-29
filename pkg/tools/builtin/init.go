@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"github.com/lcoder/lcoder/pkg/task"
 	"github.com/lcoder/lcoder/pkg/tools"
 )
 
@@ -16,6 +17,7 @@ func init() {
 		{"ls", NewLs},
 		{"grep", NewGrep},
 		{"find", NewFind},
+		{task.ToolName, NewTodoWrite},
 	} {
 		tools.DefaultFactories.Register(f.name, f.factory)
 	}

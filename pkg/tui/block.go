@@ -45,7 +45,8 @@ type blockUsage struct {
 }
 
 // render returns the styled string for this block at the given width. expanded
-// only affects tool blocks (Ctrl+O view).
+// (Ctrl+O view) reveals the full thinking trace on assistant blocks and the
+// args/result body on tool blocks.
 func (b block) render(width int, expanded bool) string {
 	switch b.kind {
 	case blockUser:
@@ -65,7 +66,7 @@ func (b block) render(width int, expanded bool) string {
 	case blockAssistant:
 		var sb strings.Builder
 		if b.thinking != "" {
-			sb.WriteString(styleDim().Italic(true).Render("🧠 " + truncate(b.thinking, 200)))
+			sb.WriteString(renderThinking(b.thinking, expanded))
 			sb.WriteString("\n\n")
 		}
 		sb.WriteString(renderMarkdownCached(b.raw, width))
@@ -82,4 +83,22 @@ func (b block) render(width int, expanded bool) string {
 	default: // blockSystem
 		return styleDim().Italic(true).Render(b.raw)
 	}
+}
+
+// renderThinking renders the assistant's reasoning trace. Compact mode shows a
+// dimmed one-line preview (whitespace collapsed, clipped to 200 cells); expanded
+// mode (Ctrl+O) shows the full multi-line trace under a "Thinking:" header.
+func renderThinking(thinking string, expanded bool) string {
+	style := styleDim().Italic(true)
+	if !expanded {
+		preview := strings.Join(strings.Fields(thinking), " ")
+		return style.Render("🧠 " + truncate(preview, 200))
+	}
+	var sb strings.Builder
+	sb.WriteString(style.Render("🧠 Thinking:"))
+	for _, ln := range strings.Split(strings.TrimRight(thinking, "\n"), "\n") {
+		sb.WriteString("\n")
+		sb.WriteString(style.Render("  " + ln))
+	}
+	return sb.String()
 }

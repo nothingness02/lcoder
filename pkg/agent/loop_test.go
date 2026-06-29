@@ -99,6 +99,37 @@ func TestAgentToolCall(t *testing.T) {
 	}
 }
 
+func TestAgentNaturalCompletionDefault(t *testing.T) {
+	// With no ShouldStop configured, the loop must default to "natural
+	// completion": keep streaming while the model is still calling tools, and
+	// stop on the first turn that produces a plain-text answer (no tool calls).
+	toolMsg := models.NewAgentMessage(models.RoleAssistant, models.ToolCallContent{
+		Type: "tool_call", ID: "call_1", Name: "ls", Arguments: map[string]any{},
+	})
+	client, adapter := llmtest.NewScript(
+		llmtest.Turn(llmtest.Done(toolMsg, nil)),                             // turn 0: a tool call
+		llmtest.Turn(llmtest.Done(models.AssistantMessage("all done"), nil)), // turn 1: final answer
+	)
+
+	obs := observability.NewCollector(observability.NewMemoryExporter())
+	ag := NewWithObservability(Config{
+		SystemPrompt:      "You are helpful.",
+		Model:             models.ModelRef{Provider: "openai", ID: "gpt-4o-mini"},
+		MaxTurns:          5,
+		ToolExecutionMode: models.ExecutionParallel,
+		// Deliberately no ShouldStop: exercise the default behavior.
+	}, client, testRegistry(t.TempDir()), permissions.NewEngine(permissions.DefaultConfig()), events.New(), obs)
+
+	if err := ag.Prompt(context.Background(), models.UserMessage("list files")); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	// Exactly two streamed turns: the tool call, then the final answer the model
+	// produced after seeing the tool result.
+	if adapter.CallCount() != 2 {
+		t.Fatalf("expected 2 turns (tool call then final answer), got %d", adapter.CallCount())
+	}
+}
+
 func TestAgentMaxTurns(t *testing.T) {
 	client, adapter := llmtest.NewScript(llmtest.Turn(
 		llmtest.Done(models.AssistantMessage("ok"), nil),

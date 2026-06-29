@@ -39,11 +39,11 @@ func (m *Model) bottomRegion() string {
 
 	if m.menuVisible {
 		matches := menuMatches(m.input.Value())
-		sections = append(sections, renderMenu(matches, m.menuSelected, m.width))
+		sections = append(sections, renderMenu(matches, m.menuSelected, m.mainWidth))
 	} else if m.fileMenuVisible {
-		sections = append(sections, renderFileMenu(m.fileMenuItems, m.fileMenuSelected, m.width))
+		sections = append(sections, renderFileMenu(m.fileMenuItems, m.fileMenuSelected, m.mainWidth))
 	} else if m.cmdPanel.visible {
-		sections = append(sections, renderCmdPanel(m.cmdPanel, m.width))
+		sections = append(sections, renderCmdPanel(m.cmdPanel, m.mainWidth))
 	}
 
 	sections = append(sections, m.input.View())
@@ -66,7 +66,7 @@ func (m *Model) statusLineView() string {
 	default:
 		left = styleDim().Render(m.modeLabel())
 	}
-	return statusLine(m.width, left, m.contextRight())
+	return statusLine(m.mainWidth, left, m.contextRight())
 }
 
 // modeLabel returns the current agent mode for the status bar.
@@ -101,7 +101,11 @@ func (m Model) View() string {
 
 	top := m.viewport.View()
 	bottom := m.bottomRegion()
-	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	main := lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	if m.taskSidebarVisible() {
+		return lipgloss.JoinHorizontal(lipgloss.Top, main, renderTaskSidebar(m.tasks, m.height))
+	}
+	return main
 }
 
 // startupView renders the animated logo + header over an empty body.

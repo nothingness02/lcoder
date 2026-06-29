@@ -6,6 +6,7 @@ import (
 	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/mcp"
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/task"
 )
 
 // handleEvent applies one agent event to the model's block history.
@@ -45,6 +46,13 @@ func (m *Model) handleEvent(ev events.Event) {
 		}
 
 	case events.ToolExecutionStartEvent:
+		// todo_write drives the task sidebar, not a conversation block.
+		if e.ToolName == task.ToolName {
+			if m.applyTaskUpdate(e.Args) {
+				m.updateSizes()
+			}
+			break
+		}
 		m.appendBlock(block{
 			kind:     blockTool,
 			id:       e.ToolCallID,
@@ -53,6 +61,9 @@ func (m *Model) handleEvent(ev events.Event) {
 		})
 
 	case events.ToolExecutionEndEvent:
+		if e.ToolName == task.ToolName {
+			break
+		}
 		m.finishTool(e.ToolCallID, e.ToolName, e.Result, e.IsError)
 		m.turnTools = append(m.turnTools, toolResultEntry{
 			name:    e.ToolName,

@@ -11,6 +11,7 @@ import (
 	"github.com/lcoder/lcoder/pkg/llm"
 	"github.com/lcoder/lcoder/pkg/mcp"
 	"github.com/lcoder/lcoder/pkg/skills"
+	"github.com/lcoder/lcoder/pkg/task"
 )
 
 // uiState is the explicit state-machine enum for the top-level model.
@@ -73,6 +74,12 @@ type Model struct {
 
 	toolsExpanded bool
 
+	// Task sidebar: tasks declared via the todo_write tool, the user's manual
+	// hide override, and the cached main-content width set by updateSizes.
+	tasks             []task.Task
+	taskSidebarHidden bool
+	mainWidth         int
+
 	header      headerInfo
 	headerFrame int
 
@@ -133,6 +140,13 @@ func NewModel(bus *events.Bus, ag AgentRunner, session SessionWriter, store Sess
 		needsProviderSetup: needsProviderSetup,
 		header:             headerInfo{model: model, cwd: cwd, version: "0.1"},
 	}
+	// Restore the display from the agent's already-loaded context window so a
+	// session reloaded at startup shows its prior conversation (and task
+	// sidebar), matching what /sessions does via loadSession.
+	if msgs := ag.AllMessages(); len(msgs) > 0 {
+		m.blocks = blocksFromMessages(msgs)
+		m.tasks = tasksFromMessages(msgs)
+	}
 	m.unsubscribe = bus.Subscribe(m.onEvent)
 	if needsProviderSetup {
 		m.openProviderPanel()
@@ -186,16 +200,19 @@ func (m *Model) addUser(text string) {
 	m.appendBlock(block{kind: blockUser, raw: text, attachments: mentionLabels(m.cwd, text)})
 }
 
-// updateSizes recomputes layout after a resize.
+// updateSizes recomputes layout after a resize, reserving the task sidebar's
+// fixed column when it is visible.
 func (m *Model) updateSizes() {
-	m.input.SetWidth(m.width - 2)
+	mw := m.mainContentWidth()
+	m.mainWidth = mw
+	m.input.SetWidth(mw - 2)
 	m.input.SyncHeight()
 	bottom := m.bottomHeight()
 	vh := m.height - bottom
 	if vh < 3 {
 		vh = 3
 	}
-	m.viewport.Width = m.width
+	m.viewport.Width = mw
 	m.viewport.Height = vh
 	m.rebuildViewport()
 }

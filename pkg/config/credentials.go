@@ -107,3 +107,49 @@ func SaveCredentials(path string, creds map[string]ProviderConn) error {
 	}
 	return nil
 }
+
+// configFilePath returns ~/.lcoder/config.yaml (empty when no home dir).
+func configFilePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".lcoder", "config.yaml")
+}
+
+// SaveProviderSelection persists the chosen provider and model id to the main
+// config file (~/.lcoder/config.yaml), preserving every other existing key. The
+// TUI provider wizard calls this so the selection survives the next launch: on
+// restart Load() reads this provider (whose api key now lives in
+// credentials.yaml), so ProviderHasKey reports true and the first-launch wizard
+// does not re-fire for an already-configured provider.
+func SaveProviderSelection(provider, model string) error {
+	path := configFilePath()
+	if path == "" {
+		return fmt.Errorf("cannot resolve home directory for config path")
+	}
+	raw := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("parse config %s: %w", path, err)
+		}
+		if raw == nil {
+			raw = map[string]any{}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read config %s: %w", path, err)
+	}
+	raw["provider"] = provider
+	raw["model"] = model
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	data, err := yaml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
+}
