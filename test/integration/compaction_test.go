@@ -75,7 +75,7 @@ func renderCompactionMarkdown(generatedAt, provider, model string, reports []mec
 	b.WriteString(fmt.Sprintf("- Generated: %s\n", generatedAt))
 	b.WriteString(fmt.Sprintf("- Provider / Model(仅真实摘要子用例使用): %s / %s\n", provider, model))
 	b.WriteString(fmt.Sprintf("- 机制数: %d\n\n", len(reports)))
-	b.WriteString("逐一驱动 `compaction` 与 `contextmgr` 窗口策略的每条压缩路径,展示压缩前后的消息序列与 token 变化。\n\n---\n\n")
+	b.WriteString("逐一驱动 `compaction`、`contextmgr` 窗口策略截断与 `MaybeCompact` 已提交压缩的每条路径,展示压缩前后的消息序列与 token 变化。\n\n---\n\n")
 
 	for i, r := range reports {
 		b.WriteString(fmt.Sprintf("## %d. %s\n\n", i+1, r.Name))
@@ -178,34 +178,45 @@ func TestCompactionMechanisms(t *testing.T) {
 		})
 	})
 
-	// 3. Eager compaction with a (deterministic) summarizer injected.
-	t.Run("WindowPolicy_EagerCompaction_SimpleSummarizer", func(t *testing.T) {
-		budget := contextmgr.TokenBudget{MaxTotal: 300, TargetTotal: 150, ReserveOutput: 50}
+	// 3. Eager compaction committed via MaybeCompact with a (deterministic) summarizer.
+	t.Run("MaybeCompact_EagerCompaction_SimpleSummarizer", func(t *testing.T) {
+		budget := contextmgr.TokenBudget{MaxTotal: 4000, TargetTotal: 150, ReserveOutput: 50}
 		mgr := contextmgr.NewManager(budget,
-			contextmgr.WithWindowPolicy(contextmgr.NewKeepRecentInBudget(2)),
-			contextmgr.WithSummarizer(contextmgr.SummarizeFunc(compaction.SimpleSummarize)))
+			contextmgr.WithSummarizer(contextmgr.SummarizeFunc(compaction.SimpleSummarize)),
+			contextmgr.WithMinRecent(2))
 		mgr.SetSystemPrompt("you are a test agent")
 		before := convo(20)
 		mgr.ReplaceRecent(before)
 
-		req, err := mgr.BuildTurnRequest(models.ModelRef{ID: testModelID}, nil)
+		committed, err := mgr.MaybeCompact()
 		if err != nil {
-			t.Fatalf("build turn request: %v", err)
+			t.Fatalf("MaybeCompact: %v", err)
 		}
-		if !hasSummaryMessage(req.Messages) {
-			t.Fatalf("expected an injected compaction summary in messages")
+		if !committed {
+			t.Fatalf("expected MaybeCompact to commit when total > CompactLimit")
 		}
-		if len(req.Messages) >= len(before) {
-			t.Fatalf("expected compaction to shrink the message count; got %d of %d", len(req.Messages), len(before))
+		recent, ok := mgr.GetBlock(contextmgr.BlockRecent, "recent")
+		if !ok {
+			t.Fatalf("recent block missing after compaction")
+		}
+		after := recent.Messages
+		if !hasSummaryMessage(after) {
+			t.Fatalf("expected an injected compaction summary in recent block")
+		}
+		if len(after) >= len(before) {
+			t.Fatalf("expected compaction to shrink the message count; got %d of %d", len(after), len(before))
+		}
+		if v, ok := after[0].Metadata["compacted"].(bool); !ok || !v {
+			t.Fatalf("expected folded summary at head with metadata compacted=true")
 		}
 		reports = append(reports, mechanismReport{
-			Name:         "WindowPolicy 急切压缩(注入摘要)",
-			Detail:       "`KeepRecentInBudget.fitWithCompaction` + `compactRecent`:`total > CompactLimit` 触发急切压缩,把旧消息交给摘要器,生成 `[Summary of earlier conversation]` 注入 recent 块头部,保留近期尾部。",
+			Name:         "MaybeCompact 急切压缩(已提交,注入摘要)",
+			Detail:       "`Manager.MaybeCompact`:turn 边界检查 `total > CompactLimit` 时触发,把旧消息交给摘要器生成 `[Summary of earlier conversation]`,作为 `compacted=true` 的 system 消息前置回写 recent 块(原地提交,非 BuildTurnRequest 时临时计算)。",
 			Before:       renderMsgs(before),
-			After:        renderMsgs(req.Messages),
+			After:        renderMsgs(after),
 			BeforeTokens: contextmgr.DefaultEstimator(before),
-			AfterTokens:  contextmgr.DefaultEstimator(req.Messages),
-			Verdict:      fmt.Sprintf("PASS —— 20 条压缩为 %d 条(含 1 条注入摘要)", len(req.Messages)),
+			AfterTokens:  contextmgr.DefaultEstimator(after),
+			Verdict:      fmt.Sprintf("PASS —— 20 条折叠为 %d 条(1 摘要 + 近期尾部),已原地提交", len(after)),
 		})
 	})
 
@@ -273,11 +284,12 @@ func TestCompactionMechanisms(t *testing.T) {
 			t.Fatalf("expected ErrCompactionSkipped once breaker is open, got %v", err)
 		}
 
-		// (b) Manager graceful fallback: a failing summarizer must not crash the
-		// turn — compactRecent drops older messages and keeps the tail, no summary.
+		// (b) summarizer 失败必须非致命:MaybeCompact 把错误原样返回且不 mutate 状态;
+		// BuildTurnRequest 与压缩解耦,无论摘要成败都只截断、不注入摘要、不报错。
 		budget := contextmgr.TokenBudget{MaxTotal: 300, TargetTotal: 150, ReserveOutput: 50}
 		mgr := contextmgr.NewManager(budget,
 			contextmgr.WithWindowPolicy(contextmgr.NewKeepRecentInBudget(2)),
+			contextmgr.WithMinRecent(2),
 			contextmgr.WithSummarizer(contextmgr.SummarizeFunc(func(_ []models.AgentMessage) (string, error) {
 				return "", boom
 			})))
@@ -285,6 +297,9 @@ func TestCompactionMechanisms(t *testing.T) {
 		before := convo(20)
 		mgr.ReplaceRecent(before)
 
+		if _, err := mgr.MaybeCompact(); !errors.Is(err, boom) {
+			t.Fatalf("expected MaybeCompact to surface the summarizer error, got %v", err)
+		}
 		req, err := mgr.BuildTurnRequest(models.ModelRef{ID: testModelID}, nil)
 		if err != nil {
 			t.Fatalf("build turn request must not fail on summarizer error: %v", err)
@@ -293,16 +308,16 @@ func TestCompactionMechanisms(t *testing.T) {
 			t.Fatalf("expected no summary injected when summarizer fails")
 		}
 		if len(req.Messages) == 0 {
-			t.Fatalf("expected a kept tail after graceful fallback")
+			t.Fatalf("expected a kept tail when compaction is skipped")
 		}
 		reports = append(reports, mechanismReport{
 			Name:         "CircuitBreaker 降级",
-			Detail:       "`CircuitBreaker.Wrap` 连续 3 次失败后返回 `ErrCompactionSkipped`;装进 Manager 后,摘要失败时 `compactRecent` 优雅回退为截断(不注入摘要、不报错)。",
+			Detail:       "`CircuitBreaker.Wrap` 连续 3 次失败后返回 `ErrCompactionSkipped`;装进 Manager 后,`MaybeCompact` 把摘要错误作为非致命 error 返回且不改动状态,agent loop 视为非致命继续。`BuildTurnRequest` 与压缩解耦,失败时仅截断、不注入摘要、不报错。",
 			Before:       renderMsgs(before),
 			After:        renderMsgs(req.Messages),
 			BeforeTokens: contextmgr.DefaultEstimator(before),
 			AfterTokens:  contextmgr.DefaultEstimator(req.Messages),
-			Verdict:      fmt.Sprintf("PASS —— 断路器 3 次后开路;Manager 回退为 %d 条尾部、无摘要、无错误", len(req.Messages)),
+			Verdict:      fmt.Sprintf("PASS —— 断路器 3 次后开路;摘要失败时 MaybeCompact 返回错误且不 mutate,BuildTurnRequest 仍截断为 %d 条尾部、无摘要、无错误", len(req.Messages)),
 		})
 	})
 
@@ -318,12 +333,12 @@ func TestCompactionMechanisms(t *testing.T) {
 			t.Skip("no provider with an API key configured; skipping real-LLM summarizer sub-case")
 		}
 
-		budget := contextmgr.TokenBudget{MaxTotal: 600, TargetTotal: 250, ReserveOutput: 100}
+		budget := contextmgr.TokenBudget{MaxTotal: 4000, TargetTotal: 250, ReserveOutput: 100}
 		breaker := compaction.NewCircuitBreaker(0)
 		summarizer := compaction.NewLLMSummarizer(client, models.ModelRef{Provider: provider, ID: model})
 		mgr := contextmgr.NewManager(budget,
-			contextmgr.WithWindowPolicy(contextmgr.NewKeepRecentInBudget(2)),
-			contextmgr.WithSummarizer(contextmgr.SummarizeFunc(breaker.Wrap(summarizer))))
+			contextmgr.WithSummarizer(contextmgr.SummarizeFunc(breaker.Wrap(summarizer))),
+			contextmgr.WithMinRecent(2))
 		mgr.SetSystemPrompt("you are a test agent")
 
 		before := []models.AgentMessage{
@@ -337,16 +352,24 @@ func TestCompactionMechanisms(t *testing.T) {
 		}
 		mgr.ReplaceRecent(before)
 
-		req, err := mgr.BuildTurnRequest(models.ModelRef{Provider: provider, ID: model}, nil)
+		committed, err := mgr.MaybeCompact()
 		if err != nil {
-			t.Fatalf("build turn request: %v", err)
+			t.Fatalf("MaybeCompact: %v", err)
 		}
-		if !hasSummaryMessage(req.Messages) {
-			t.Fatalf("expected an injected real-LLM summary in messages")
+		if !committed {
+			t.Fatalf("expected real-LLM compaction to commit when total > CompactLimit")
+		}
+		recent, ok := mgr.GetBlock(contextmgr.BlockRecent, "recent")
+		if !ok {
+			t.Fatalf("recent block missing after compaction")
+		}
+		after := recent.Messages
+		if !hasSummaryMessage(after) {
+			t.Fatalf("expected an injected real-LLM summary in recent block")
 		}
 		// Capture the actual summary text for the visualization.
 		var summaryText string
-		for _, m := range req.Messages {
+		for _, m := range after {
 			if strings.Contains(m.Text(), "[Summary of earlier conversation]") {
 				summaryText = m.Text()
 				break
@@ -357,12 +380,12 @@ func TestCompactionMechanisms(t *testing.T) {
 		}
 		reports = append(reports, mechanismReport{
 			Name:         "真实 LLM 摘要急切压缩",
-			Detail:       "`compaction.NewLLMSummarizer`(经 CircuitBreaker 包裹):真实 provider 把旧消息压缩为双段提示中的 `<summary>`,注入 recent 块。",
+			Detail:       "`compaction.NewLLMSummarizer`(经 CircuitBreaker 包裹):`Manager.MaybeCompact` 用真实 provider 把旧消息压缩为双段提示中的 `<summary>`,作为 `compacted=true` 的 system 消息原地提交进 recent 块。",
 			Before:       renderMsgs(before),
-			After:        renderMsgs(req.Messages),
+			After:        renderMsgs(after),
 			BeforeTokens: contextmgr.DefaultEstimator(before),
-			AfterTokens:  contextmgr.DefaultEstimator(req.Messages),
-			Verdict:      fmt.Sprintf("PASS —— 真实模型生成 %d 字摘要并注入", len([]rune(summaryText))),
+			AfterTokens:  contextmgr.DefaultEstimator(after),
+			Verdict:      fmt.Sprintf("PASS —— 真实模型生成 %d 字摘要并原地提交", len([]rune(summaryText))),
 		})
 	})
 
