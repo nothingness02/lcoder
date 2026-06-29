@@ -276,6 +276,8 @@ func (a *Agent) run(ctx context.Context, initialPrompts []models.AgentMessage) e
 
 		_ = a.bus.Emit(ctx, events.TurnStartEvent{Base: events.Base{Type: events.TurnStart, Turn: turn}})
 
+		a.maybeCompact(ctx, turn)
+
 		assistantMsg, err := a.streamAssistant(ctx, turn)
 		if err != nil {
 			_ = a.bus.Emit(ctx, events.ErrorEvent{Base: events.Base{Type: events.Error, Turn: turn}, Message: err.Error()})
@@ -330,6 +332,29 @@ func (a *Agent) appendMessage(msg models.AgentMessage) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.mgr.AppendRecent(msg)
+}
+
+// maybeCompact asks the context manager to commit a compaction at a turn
+// boundary. On commit it emits CompactionCommitted so the persistence layer can
+// rewrite the session to the compacted state. A summarizer error is non-fatal:
+// it surfaces as an Error event and the turn proceeds with the truncation
+// backstop in BuildTurnRequest.
+func (a *Agent) maybeCompact(ctx context.Context, turn int) {
+	a.mu.Lock()
+	committed, err := a.mgr.MaybeCompact()
+	a.mu.Unlock()
+	if err != nil {
+		_ = a.bus.Emit(ctx, events.ErrorEvent{
+			Base:    events.Base{Type: events.Error, Turn: turn},
+			Message: "compaction: " + err.Error(),
+		})
+		return
+	}
+	if committed {
+		_ = a.bus.Emit(ctx, events.CompactionCommittedEvent{
+			Base: events.Base{Type: events.CompactionCommitted, Turn: turn},
+		})
+	}
 }
 
 // Stats returns context manager statistics if available.
