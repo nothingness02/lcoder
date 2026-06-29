@@ -1,7 +1,6 @@
 package contextmgr
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -45,15 +44,16 @@ func TestWindowKeepsPairedToolResult(t *testing.T) {
 	}
 }
 
-// When the summarizer fails, compaction must degrade to truncation rather than
-// propagating a fatal error, so the turn can still be built.
-func TestWindowCompactionFallsBackOnSummarizerError(t *testing.T) {
+// The window policy no longer summarizes; it only truncates to fit the hard
+// limit. Even with a summarizer configured on the manager, BuildTurnRequest must
+// inject no compacted summary and must keep the request within budget.
+func TestWindowTruncatesWithoutSummarizing(t *testing.T) {
 	mgr := NewManager(TokenBudget{
 		MaxTotal:      2000,
 		TargetTotal:   1500,
 		ReserveOutput: 500,
 	}, WithSummarizer(func(msgs []models.AgentMessage) (string, error) {
-		return "", errors.New("summarizer down")
+		return "should not be called by window policy", nil
 	}), WithWindowPolicy(DefaultKeepRecentInBudget()))
 
 	mgr.SetBlock(NewBlock(BlockSystem, "system", StabilityStatic, 100,
@@ -69,22 +69,18 @@ func TestWindowCompactionFallsBackOnSummarizerError(t *testing.T) {
 
 	req, err := mgr.BuildTurnRequest(models.ModelRef{Provider: "openai", ID: "gpt-4o"}, nil)
 	if err != nil {
-		t.Fatalf("expected graceful fallback, got error: %v", err)
+		t.Fatalf("expected graceful truncation, got error: %v", err)
 	}
 	if len(req.Messages) == 0 {
 		t.Fatal("expected truncated messages to remain")
 	}
-
-	// No compacted summary should be injected on the failure path.
 	for _, m := range req.Messages {
 		if m.Role == models.RoleSystem {
 			if v, ok := m.Metadata["compacted"].(bool); ok && v {
-				t.Fatal("did not expect a compacted summary when summarizer fails")
+				t.Fatal("window policy must not inject a compacted summary")
 			}
 		}
 	}
-
-	// A user message must still be retained.
 	var foundUser bool
 	for _, m := range req.Messages {
 		if m.Role == models.RoleUser {
@@ -93,6 +89,6 @@ func TestWindowCompactionFallsBackOnSummarizerError(t *testing.T) {
 		}
 	}
 	if !foundUser {
-		t.Fatal("expected at least one user message to be retained after truncation")
+		t.Fatal("expected at least one user message after truncation")
 	}
 }
