@@ -164,6 +164,28 @@ func (s *Store) MostRecent(cwd string) (*Session, error) {
 	return &sessions[0], nil
 }
 
+// AppendMissing appends every message from msgs whose ID is not already present
+// in the session, preserving order. The TUI and one-shot runner only Append the
+// user message at submit time; the agent's assistant and tool_result messages
+// live in its context window and must be mirrored in here after a turn so they
+// actually reach disk. Dedup is by message ID, making repeated calls idempotent.
+func (s *Session) AppendMissing(msgs []models.AgentMessage) error {
+	have := make(map[string]bool, len(s.Messages))
+	for _, m := range s.Messages {
+		have[m.ID] = true
+	}
+	for _, m := range msgs {
+		if m.ID == "" || have[m.ID] {
+			continue
+		}
+		if err := s.Append(m); err != nil {
+			return err
+		}
+		have[m.ID] = true
+	}
+	return nil
+}
+
 // Append adds a message to the session and persists it.
 func (s *Session) Append(msg models.AgentMessage) error {
 	if msg.Metadata == nil {

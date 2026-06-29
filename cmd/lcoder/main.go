@@ -375,6 +375,11 @@ func runOneShot(ctx context.Context, setup *agentSetup, prompt string) error {
 		return err
 	}
 	final := setup.ag.AllMessages()
+	// Mirror the agent's assistant/tool output into the session so every
+	// message reaches disk, not just the user prompts appended above.
+	if err := setup.sess.AppendMissing(final); err != nil {
+		return fmt.Errorf("persist session: %w", err)
+	}
 	if len(final) == 0 {
 		return nil
 	}
