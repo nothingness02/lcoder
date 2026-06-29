@@ -61,8 +61,6 @@ func main() {
 	root.AddCommand(modelsCmd())
 	root.AddCommand(skillsCmd())
 	root.AddCommand(sessionsCmd())
-	root.AddCommand(forkCmd())
-	root.AddCommand(cloneCmd())
 	root.AddCommand(modesCmd())
 	root.AddCommand(statsCmd())
 	root.AddCommand(exportCmd())
@@ -333,6 +331,11 @@ func runOneShot(ctx context.Context, setup *agentSetup, prompt string) error {
 	// Persist after each assistant/tool message turn.
 	persistHandler := func(ctx context.Context, ev events.Event) error {
 		switch ev.(type) {
+		case events.CompactionCommittedEvent:
+			// Compaction committed in the manager: reset the on-disk session to
+			// the compacted runtime state (summary + recent tail), discarding the
+			// older raw messages.
+			_ = setup.sess.Replace(setup.ag.AllMessages())
 		case events.MessageEndEvent, events.ToolExecutionEndEvent, events.AgentEndEvent:
 			_ = setup.sess.Save()
 		}
@@ -375,6 +378,11 @@ func runOneShot(ctx context.Context, setup *agentSetup, prompt string) error {
 		return err
 	}
 	final := setup.ag.AllMessages()
+	// Mirror the agent's assistant/tool output into the session so every
+	// message reaches disk, not just the user prompts appended above.
+	if err := setup.sess.AppendMissing(final); err != nil {
+		return fmt.Errorf("persist session: %w", err)
+	}
 	if len(final) == 0 {
 		return nil
 	}
@@ -396,6 +404,8 @@ func runTUI(ctx context.Context, setup *agentSetup) error {
 	// Persist after each assistant/tool message turn.
 	persistHandler := func(ctx context.Context, ev events.Event) error {
 		switch ev.(type) {
+		case events.CompactionCommittedEvent:
+			_ = setup.sess.Replace(setup.ag.AllMessages())
 		case events.MessageEndEvent, events.ToolExecutionEndEvent, events.AgentEndEvent:
 			_ = setup.sess.Save()
 		}

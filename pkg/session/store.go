@@ -45,24 +45,22 @@ func NewStore(dir string) *Store {
 
 // Session is a persisted conversation.
 type Session struct {
-	ID           string
-	Path         string
-	CWD          string
-	Messages     []models.AgentMessage
-	ActiveBranch []string
-	CreatedAt    int64
+	ID        string
+	Path      string
+	CWD       string
+	Messages  []models.AgentMessage
+	CreatedAt int64
 }
 
 // Create initializes a new session for the given working directory.
 func (s *Store) Create(cwd string) (*Session, error) {
 	id := uuid.New().String()[:12]
 	sess := &Session{
-		ID:           id,
-		Path:         s.sessionPath(cwd, id),
-		CWD:          cwd,
-		Messages:     []models.AgentMessage{},
-		ActiveBranch: []string{},
-		CreatedAt:    time.Now().Unix(),
+		ID:        id,
+		Path:      s.sessionPath(cwd, id),
+		CWD:       cwd,
+		Messages:  []models.AgentMessage{},
+		CreatedAt: time.Now().Unix(),
 	}
 	if err := os.MkdirAll(filepath.Dir(sess.Path), 0o755); err != nil {
 		return nil, err
@@ -106,12 +104,6 @@ func (s *Store) Load(path string) (*Session, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
-	}
-
-	// Rebuild active branch from root to last message without branching.
-	if len(sess.Messages) > 0 {
-		last := sess.Messages[len(sess.Messages)-1]
-		sess.ActiveBranch = buildBranch(sess.Messages, last.ID)
 	}
 
 	return sess, nil
@@ -164,6 +156,28 @@ func (s *Store) MostRecent(cwd string) (*Session, error) {
 	return &sessions[0], nil
 }
 
+// AppendMissing appends every message from msgs whose ID is not already present
+// in the session, preserving order. The TUI and one-shot runner only Append the
+// user message at submit time; the agent's assistant and tool_result messages
+// live in its context window and must be mirrored in here after a turn so they
+// actually reach disk. Dedup is by message ID, making repeated calls idempotent.
+func (s *Session) AppendMissing(msgs []models.AgentMessage) error {
+	have := make(map[string]bool, len(s.Messages))
+	for _, m := range s.Messages {
+		have[m.ID] = true
+	}
+	for _, m := range msgs {
+		if m.ID == "" || have[m.ID] {
+			continue
+		}
+		if err := s.Append(m); err != nil {
+			return err
+		}
+		have[m.ID] = true
+	}
+	return nil
+}
+
 // Append adds a message to the session and persists it.
 func (s *Session) Append(msg models.AgentMessage) error {
 	if msg.Metadata == nil {
@@ -173,56 +187,53 @@ func (s *Session) Append(msg models.AgentMessage) error {
 	msg.Metadata["cwd"] = s.CWD
 	msg.Metadata["saved_at"] = time.Now().UnixMilli()
 
-	if len(s.Messages) > 0 {
-		last := s.Messages[len(s.Messages)-1]
-		msg.ParentID = &last.ID
-	}
-
 	s.Messages = append(s.Messages, msg)
-	s.ActiveBranch = buildBranch(s.Messages, msg.ID)
 
 	return s.Save()
 }
 
-// Save writes all messages to the session file.
+// Save writes all messages to the session file using an atomic temp-file +
+// rename so a crash mid-write cannot leave a truncated/corrupt JSONL.
 func (s *Session) Save() error {
 	if err := os.MkdirAll(filepath.Dir(s.Path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(s.Path)
+	tmp, err := os.CreateTemp(filepath.Dir(s.Path), ".session-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
 
 	for _, msg := range s.Messages {
 		data, err := json.Marshal(msg)
 		if err != nil {
+			tmp.Close()
 			return err
 		}
-		if _, err := f.Write(data); err != nil {
-			return err
-		}
-		if _, err := f.WriteString("\n"); err != nil {
+		if _, err := tmp.Write(append(data, '\n')); err != nil {
+			tmp.Close()
 			return err
 		}
 	}
-	return nil
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, s.Path)
 }
 
-// ActiveMessages returns messages on the active branch.
+// Replace overwrites the session's entire conversation with msgs and persists
+// it. Used when compaction commits: the runtime context (summary + recent tail)
+// becomes the new on-disk state and the older raw messages are discarded.
+func (s *Session) Replace(msgs []models.AgentMessage) error {
+	s.Messages = append([]models.AgentMessage(nil), msgs...)
+	return s.Save()
+}
+
+// ActiveMessages returns the session's conversation. A session is a single
+// linear conversation (no branching), so this is simply every stored message.
 func (s *Session) ActiveMessages() []models.AgentMessage {
-	set := make(map[string]struct{}, len(s.ActiveBranch))
-	for _, id := range s.ActiveBranch {
-		set[id] = struct{}{}
-	}
-	var out []models.AgentMessage
-	for _, msg := range s.Messages {
-		if _, ok := set[msg.ID]; ok {
-			out = append(out, msg)
-		}
-	}
-	return out
+	return s.Messages
 }
 
 func (s *Store) sessionPath(cwd, id string) string {
@@ -235,28 +246,6 @@ func (s *Session) modifiedTime() int64 {
 		return 0
 	}
 	return info.ModTime().Unix()
-}
-
-func buildBranch(messages []models.AgentMessage, leafID string) []string {
-	byID := make(map[string]models.AgentMessage, len(messages))
-	for _, m := range messages {
-		byID[m.ID] = m
-	}
-
-	var branch []string
-	current := leafID
-	for current != "" {
-		branch = append([]string{current}, branch...)
-		msg, ok := byID[current]
-		if !ok {
-			break
-		}
-		if msg.ParentID == nil {
-			break
-		}
-		current = *msg.ParentID
-	}
-	return branch
 }
 
 // SessionID returns the session identifier.

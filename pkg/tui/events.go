@@ -74,6 +74,9 @@ func (m *Model) handleEvent(ev events.Event) {
 	case events.AgentEndEvent:
 		m.completedTurns++
 
+	case events.CompactionCommittedEvent:
+		m.addSystem("↧ 已压缩早前对话以节省 token(原始记录已合并为摘要)")
+
 	case events.ErrorEvent:
 		m.errMsg = e.Message
 		m.addSystem(styleError().Render("error: " + e.Message))

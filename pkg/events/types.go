@@ -22,6 +22,7 @@ const (
 	ToolExecutionEnd    EventType = "tool_execution_end"
 	Audit               EventType = "audit"
 	Error               EventType = "error"
+	CompactionCommitted EventType = "compaction_committed"
 )
 
 // Event is the interface implemented by all agent events.
@@ -104,6 +105,11 @@ type ErrorEvent struct {
 	Base
 	Message string `json:"message"`
 }
+
+// CompactionCommittedEvent signals that the context manager folded older
+// messages into a summary and committed the compacted window in place. The
+// persistence layer reacts by rewriting the session to the compacted state.
+type CompactionCommittedEvent struct{ Base }
 
 // AuditEvent records a security/permission decision or tool invocation audit.
 type AuditEvent struct {

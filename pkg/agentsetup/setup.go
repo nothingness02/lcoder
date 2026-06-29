@@ -40,6 +40,7 @@ func BuildSystemPrompt() string {
 func NewContextManager(cfg config.Config, budget config.TokenBudget, llmClient *llm.Client, contextText, skillsBlock string, activeMessages []models.AgentMessage) *contextmgr.Manager {
 	opts := []contextmgr.Option{
 		contextmgr.WithWindowPolicy(contextmgr.NewKeepRecentInBudget(cfg.Context.MinRecent)),
+		contextmgr.WithMinRecent(cfg.Context.MinRecent),
 	}
 	// Attach a real LLM summarizer (guarded by a circuit breaker) only when
 	// automatic compaction is enabled. Otherwise the window policy degrades to

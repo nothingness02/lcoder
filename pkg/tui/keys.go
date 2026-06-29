@@ -491,7 +491,7 @@ func (m *Model) dispatchSlash(text string) tea.Cmd {
 	case "new":
 		m.blocks = nil
 		m.rebuildViewport()
-	case "sessions", "fork":
+	case "sessions":
 		m.openSessionPicker()
 	case "extensions":
 		m.extPanel.Visible = true
@@ -661,9 +661,11 @@ func (m *Model) openSessionPicker() {
 	m.state = stateSessionPicker
 }
 
-// persistSession saves the current session to disk (no-op if not a *session.Session).
+// persistSession mirrors the agent's full context window (assistant and
+// tool_result messages, not just the user prompts appended at submit time) into
+// the session and writes it to disk. No-op if not a *session.Session.
 func (m *Model) persistSession() {
 	if sess, ok := m.session.(*session.Session); ok {
-		_ = sess.Save()
+		_ = sess.AppendMissing(m.agent.AllMessages())
 	}
 }

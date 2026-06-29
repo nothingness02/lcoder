@@ -86,64 +86,6 @@ func sessionsCmd() *cobra.Command {
 	}
 }
 
-func forkCmd() *cobra.Command {
-	var parentID, messageID string
-	cmd := &cobra.Command{
-		Use:   "fork --session SESSION --message MESSAGE_ID",
-		Short: "Fork a session at a specific message",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			store := session.NewStore("")
-			parent, err := store.LoadByID(cwd, parentID)
-			if err != nil {
-				return err
-			}
-			forked, err := store.Fork(cwd, parent, messageID)
-			if err != nil {
-				return err
-			}
-			fmt.Println(forked.ID)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&parentID, "session", "", "Parent session ID")
-	cmd.Flags().StringVar(&messageID, "message", "", "Message ID to fork at")
-	_ = cmd.MarkFlagRequired("session")
-	_ = cmd.MarkFlagRequired("message")
-	return cmd
-}
-
-func cloneCmd() *cobra.Command {
-	var sourceID string
-	cmd := &cobra.Command{
-		Use:   "clone --session SESSION",
-		Short: "Create a full clone of a session",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			store := session.NewStore("")
-			source, err := store.LoadByID(cwd, sourceID)
-			if err != nil {
-				return err
-			}
-			cloned, err := store.Clone(cwd, source)
-			if err != nil {
-				return err
-			}
-			fmt.Println(cloned.ID)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&sourceID, "session", "", "Session ID to clone")
-	_ = cmd.MarkFlagRequired("session")
-	return cmd
-}
-
 func modesCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "modes",

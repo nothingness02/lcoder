@@ -56,6 +56,7 @@ type Manager struct {
 	estimator  TokenEstimator
 	summarizer SummarizeFunc
 	policy     WindowPolicy
+	keepRecent int
 }
 
 // Option configures a Manager.
@@ -76,6 +77,17 @@ func WithWindowPolicy(p WindowPolicy) Option {
 	return func(m *Manager) { m.policy = p }
 }
 
+// WithMinRecent sets the minimum number of recent messages MaybeCompact retains
+// (alongside the last user message) when folding older messages into a summary.
+func WithMinRecent(n int) Option {
+	return func(m *Manager) {
+		if n < 1 {
+			n = 1
+		}
+		m.keepRecent = n
+	}
+}
+
 // NewManager creates a context manager with the given budget.
 func NewManager(budget TokenBudget, opts ...Option) *Manager {
 	m := &Manager{
@@ -83,6 +95,7 @@ func NewManager(budget TokenBudget, opts ...Option) *Manager {
 		estimator:  DefaultEstimator,
 		summarizer: nil,
 		policy:     &KeepRecentInBudget{},
+		keepRecent: 10,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -237,6 +250,66 @@ func (m *Manager) ReplaceRecent(msgs []models.AgentMessage) {
 	m.SetBlock(NewBlock(BlockRecent, "recent", StabilityDynamic, 100, msgs...))
 }
 
+// MaybeCompact folds the older portion of the recent block into a single summary
+// message when the estimated total exceeds CompactLimit and a summarizer is
+// configured. It mutates the recent block in place and reports whether a
+// compaction was committed. A prior summary at the head of the recent block is
+// part of the folded older slice (rolling compaction), so the recent block holds
+// at most one summary. A summarizer error is returned without mutating state so
+// the caller can treat it as non-fatal.
+func (m *Manager) MaybeCompact() (bool, error) {
+	if m.summarizer == nil {
+		return false, nil
+	}
+	total := 0
+	for _, b := range m.blocks {
+		total += m.EstimateTokens(b.Messages)
+	}
+	if total <= m.budget.CompactLimit() {
+		return false, nil
+	}
+	recent, ok := m.GetBlock(BlockRecent, "recent")
+	if !ok || len(recent.Messages) == 0 {
+		return false, nil
+	}
+
+	keep := m.keepRecent
+	if keep < 1 {
+		keep = 1
+	}
+	if keep > len(recent.Messages) {
+		keep = len(recent.Messages)
+	}
+	// Ensure the last user message stays within the retained tail.
+	lastUserIdx := -1
+	for i := len(recent.Messages) - 1; i >= 0; i-- {
+		if recent.Messages[i].Role == models.RoleUser {
+			lastUserIdx = i
+			break
+		}
+	}
+	if lastUserIdx >= 0 && lastUserIdx < len(recent.Messages)-keep {
+		keep = len(recent.Messages) - lastUserIdx
+	}
+
+	older := recent.Messages[:len(recent.Messages)-keep]
+	tail := stripLeadingOrphanToolResults(recent.Messages[len(recent.Messages)-keep:])
+	if len(older) == 0 {
+		return false, nil
+	}
+
+	summaryText, err := m.summarizer(older)
+	if err != nil {
+		return false, err
+	}
+	summary := models.NewAgentMessage(models.RoleSystem, models.TextContent{
+		Text: "[Summary of earlier conversation]\n\n" + summaryText,
+	}).WithMetadata("compacted", true)
+
+	m.ReplaceRecent(append([]models.AgentMessage{summary}, tail...))
+	return true, nil
+}
+
 // ClearRecent removes all messages from the recent block.
 func (m *Manager) ClearRecent() {
 	m.ReplaceRecent(nil)
@@ -261,24 +334,29 @@ func (m *Manager) SetSystemPrompt(text string) {
 		models.NewAgentMessage(models.RoleSystem, models.TextContent{Text: text})))
 }
 
-// SetMessages rebuilds the conversation from a flat message list.
-// System messages become system blocks; everything else goes into recent.
+// SetMessages rebuilds the conversation from a flat message list. Genuine system
+// messages become the system prompt; compacted summaries (metadata compacted=true)
+// stay in the recent block so a reloaded runtime state keeps its summary. The
+// existing system block is left intact when msgs carry no genuine system message,
+// so reloading a session never wipes the persona/system prompt.
 func (m *Manager) SetMessages(msgs []models.AgentMessage) {
-	// Preserve existing system blocks if no system messages provided.
-	var hasSystem bool
 	var nonSystem []models.AgentMessage
 	for _, msg := range msgs {
-		if msg.Role == models.RoleSystem {
+		if msg.Role == models.RoleSystem && !isCompactedSummary(msg) {
 			m.SetSystemPrompt(msg.Text())
-			hasSystem = true
 		} else {
 			nonSystem = append(nonSystem, msg)
 		}
 	}
-	if !hasSystem {
-		m.SetBlock(NewBlock(BlockSystem, "system", StabilityStatic, 100))
-	}
 	m.ReplaceRecent(nonSystem)
+}
+
+func isCompactedSummary(msg models.AgentMessage) bool {
+	if msg.Metadata == nil {
+		return false
+	}
+	v, ok := msg.Metadata["compacted"].(bool)
+	return ok && v
 }
 
 // Clone returns a deep copy of the manager with independent blocks.

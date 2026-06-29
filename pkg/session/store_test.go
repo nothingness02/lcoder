@@ -35,7 +35,4 @@ func TestCreateAppendLoad(t *testing.T) {
 	if loaded.Messages[0].Text() != "hello" {
 		t.Fatalf("expected hello, got %s", loaded.Messages[0].Text())
 	}
-	if len(loaded.ActiveBranch) != 1 {
-		t.Fatalf("expected active branch length 1, got %d", len(loaded.ActiveBranch))
-	}
 }

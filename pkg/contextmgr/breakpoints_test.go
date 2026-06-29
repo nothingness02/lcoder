@@ -59,30 +59,3 @@ func TestExplicitCacheHintBreakpoint(t *testing.T) {
 		t.Fatalf("expected explicit breakpoint, got %v", req.CacheBreakpoints)
 	}
 }
-
-func TestCompactThresholdTriggersCompaction(t *testing.T) {
-	summaryCalled := false
-	m := NewManager(TokenBudget{
-		MaxTotal:         8000,
-		TargetTotal:      7200,
-		ReserveOutput:    800,
-		CompactThreshold: 0.5,
-	}, WithSummarizer(func(msgs []models.AgentMessage) (string, error) {
-		summaryCalled = true
-		return "summary", nil
-	}))
-	m.SetSystemPrompt(strings.Repeat("a", 100))
-	// Add enough recent messages to exceed 50% of target (3600 tokens).
-	// 4 chars/token; 400 chars = 100 tokens per message.
-	for i := 0; i < 80; i++ {
-		m.AppendRecent(models.NewAgentMessage(models.RoleUser, models.TextContent{Text: strings.Repeat("x", 400)}))
-	}
-
-	_, err := m.BuildTurnRequest(models.ModelRef{Provider: "openai", ID: "gpt"}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !summaryCalled {
-		t.Fatal("expected compaction due to compact threshold")
-	}
-}
