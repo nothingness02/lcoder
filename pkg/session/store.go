@@ -206,30 +206,42 @@ func (s *Session) Append(msg models.AgentMessage) error {
 	return s.Save()
 }
 
-// Save writes all messages to the session file.
+// Save writes all messages to the session file using an atomic temp-file +
+// rename so a crash mid-write cannot leave a truncated/corrupt JSONL.
 func (s *Session) Save() error {
 	if err := os.MkdirAll(filepath.Dir(s.Path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.Create(s.Path)
+	tmp, err := os.CreateTemp(filepath.Dir(s.Path), ".session-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
 
 	for _, msg := range s.Messages {
 		data, err := json.Marshal(msg)
 		if err != nil {
+			tmp.Close()
 			return err
 		}
-		if _, err := f.Write(data); err != nil {
-			return err
-		}
-		if _, err := f.WriteString("\n"); err != nil {
+		if _, err := tmp.Write(append(data, '\n')); err != nil {
+			tmp.Close()
 			return err
 		}
 	}
-	return nil
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, s.Path)
+}
+
+// Replace overwrites the session's entire conversation with msgs and persists
+// it. Used when compaction commits: the runtime context (summary + recent tail)
+// becomes the new on-disk state and the older raw messages are discarded.
+func (s *Session) Replace(msgs []models.AgentMessage) error {
+	s.Messages = append([]models.AgentMessage(nil), msgs...)
+	return s.Save()
 }
 
 // ActiveMessages returns messages on the active branch.
