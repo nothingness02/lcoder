@@ -61,8 +61,6 @@ func main() {
 	root.AddCommand(modelsCmd())
 	root.AddCommand(skillsCmd())
 	root.AddCommand(sessionsCmd())
-	root.AddCommand(forkCmd())
-	root.AddCommand(cloneCmd())
 	root.AddCommand(modesCmd())
 	root.AddCommand(statsCmd())
 	root.AddCommand(exportCmd())

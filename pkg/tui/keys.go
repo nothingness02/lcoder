@@ -491,7 +491,7 @@ func (m *Model) dispatchSlash(text string) tea.Cmd {
 	case "new":
 		m.blocks = nil
 		m.rebuildViewport()
-	case "sessions", "fork":
+	case "sessions":
 		m.openSessionPicker()
 	case "extensions":
 		m.extPanel.Visible = true

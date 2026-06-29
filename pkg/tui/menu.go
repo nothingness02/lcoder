@@ -20,7 +20,6 @@ type commandEntry struct {
 var commandRegistry = []commandEntry{
 	{Name: "help", Aliases: []string{"?"}, Description: "Show help", Category: "System"},
 	{Name: "sessions", Aliases: []string{"resume", "continue"}, Description: "Switch session", Category: "Session"},
-	{Name: "fork", Description: "Fork session", Category: "Session"},
 	{Name: "new", Aliases: []string{"clear"}, Description: "New session / clear chat", Category: "Session"},
 	{Name: "mode", Description: "Switch agent mode", Category: "Agent"},
 	{Name: "modes", Description: "List available modes", Category: "Agent"},

@@ -65,9 +65,6 @@ func (f *fakeSessionStore) List(cwd string) ([]session.Session, error) { return 
 func (f *fakeSessionStore) LoadByID(cwd, id string) (*session.Session, error) {
 	return nil, nil
 }
-func (f *fakeSessionStore) Fork(cwd string, sess *session.Session, messageID string) (*session.Session, error) {
-	return nil, nil
-}
 
 func newTestModel() (*Model, *fakeAgent, *fakeSession) {
 	bus := events.New()

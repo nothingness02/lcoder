@@ -25,16 +25,15 @@ func (s SessionItem) Description() string {
 type SessionStore interface {
 	List(cwd string) ([]session.Session, error)
 	LoadByID(cwd, id string) (*session.Session, error)
-	Fork(cwd string, sess *session.Session, messageID string) (*session.Session, error)
 }
 
-// SessionPickerModel is an overlay for selecting or forking sessions.
+// SessionPickerModel is an overlay for selecting sessions.
 type SessionPickerModel struct {
 	list    list.Model
 	visible bool
 	cwd     string
 	store   SessionStore
-	mode    string // select | fork
+	mode    string // select
 	sess    *session.Session
 }
 
@@ -53,9 +52,6 @@ func NewSessionPicker(store SessionStore, cwd, mode string, sess *session.Sessio
 
 	l := list.New(items, delegate, 40, 12)
 	l.Title = "Sessions"
-	if mode == "fork" {
-		l.Title = "Fork From Message"
-	}
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.Styles.Title = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
@@ -109,13 +105,5 @@ func (m SessionPickerModel) Selected() *session.Session {
 		return nil
 	}
 	return sess
-}
-
-// ForkCurrent forks the current session from the selected message.
-func (m SessionPickerModel) ForkCurrent(messageID string) (*session.Session, error) {
-	if m.sess == nil {
-		return nil, fmt.Errorf("no session")
-	}
-	return m.store.Fork(m.cwd, m.sess, messageID)
 }
 
