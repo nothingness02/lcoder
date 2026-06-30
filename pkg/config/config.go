@@ -35,6 +35,34 @@ type PermissionConfig struct {
 	Rules map[string]map[string]string `yaml:"rules"`
 }
 
+// SandboxConfig configures the sandbox backend wiring tools at startup.
+type SandboxConfig struct {
+	Backend      string                  `yaml:"backend"` // "" -> passthrough
+	EnvAllowlist []string                `yaml:"env_allowlist"`
+	Network      SandboxNetworkConfig    `yaml:"network"`
+	Filesystem   SandboxFilesystemConfig `yaml:"filesystem"`
+	Limits       SandboxLimitsConfig     `yaml:"limits"`
+}
+
+// SandboxNetworkConfig is the yaml form of the network allowlist.
+type SandboxNetworkConfig struct {
+	Default string   `yaml:"default"` // "deny" | "allow"
+	Allow   []string `yaml:"allow"`
+}
+
+// SandboxFilesystemConfig lists allowed roots (relative to project root).
+type SandboxFilesystemConfig struct {
+	Readable []string `yaml:"readable"`
+	Writable []string `yaml:"writable"`
+}
+
+// SandboxLimitsConfig is the yaml form of resource limits.
+type SandboxLimitsConfig struct {
+	MaxMemoryMB    int `yaml:"max_memory_mb"`
+	MaxCPUSeconds  int `yaml:"max_cpu_seconds"`
+	MaxOutputBytes int `yaml:"max_output_bytes"`
+}
+
 // TUIConfig holds TUI-specific settings.
 type TUIConfig struct {
 	Theme string `yaml:"theme"`
@@ -51,6 +79,9 @@ type ContextConfig struct {
 	AutoCompact      bool    `yaml:"auto_compact"`      // enable automatic compaction
 	CompactThreshold float64 `yaml:"compact_threshold"` // ratio of target at which compaction starts
 	CacheHintPolicy  string  `yaml:"cache_hint_policy"` // "default", "aggressive", "none"
+	DeferredTools    bool    `yaml:"deferred_tools"`    // ship only core tools + tool_search
+	CoreTools        []string `yaml:"core_tools"`       // tools kept full under deferral
+	DropThreshold    float64 `yaml:"drop_threshold"`    // ratio of effective input at which old msgs drop
 }
 
 // Config is the full Lcoder configuration.
@@ -66,6 +97,7 @@ type Config struct {
 	Extensions  []ExtensionConfig       `yaml:"extensions"`
 	Packages    []PackageConfig         `yaml:"packages"`
 	Providers   map[string]ProviderConn `yaml:"providers"`
+	Sandbox     SandboxConfig           `yaml:"sandbox"`
 
 	// Catalog is the shared model metadata loaded from models.yaml (not parsed
 	// from the main config file). ModelsConfigPath is its resolved location.
@@ -89,6 +121,9 @@ func DefaultConfig() Config {
 			AutoCompact:      true,
 			CompactThreshold: 0.9,
 			CacheHintPolicy:  "default",
+			DeferredTools:    false,
+			CoreTools:        nil,
+			DropThreshold:    1.0,
 		},
 		Permissions: PermissionConfig{
 			Rules: map[string]map[string]string{
@@ -169,11 +204,17 @@ func (c Config) ResolveContextBudget(discoveredWindow int) (TokenBudget, string)
 		threshold = 0.9
 	}
 
+	dropThreshold := cfg.DropThreshold
+	if dropThreshold <= 0 || dropThreshold > 1 {
+		dropThreshold = 1.0
+	}
+
 	return TokenBudget{
 		MaxTotal:         maxTotal,
 		TargetTotal:      target,
 		ReserveOutput:    reserve,
 		CompactThreshold: threshold,
+		DropThreshold:    dropThreshold,
 	}, source
 }
 
@@ -183,6 +224,7 @@ type TokenBudget struct {
 	TargetTotal      int
 	ReserveOutput    int
 	CompactThreshold float64
+	DropThreshold    float64
 }
 
 // Load reads configuration from standard locations.
@@ -207,6 +249,9 @@ func Load() (Config, error) {
 			"auto_compact":      cfg.Context.AutoCompact,
 			"compact_threshold": cfg.Context.CompactThreshold,
 			"cache_hint_policy": cfg.Context.CacheHintPolicy,
+			"deferred_tools":    cfg.Context.DeferredTools,
+			"core_tools":        cfg.Context.CoreTools,
+			"drop_threshold":    cfg.Context.DropThreshold,
 		},
 	}, "."), nil)
 
