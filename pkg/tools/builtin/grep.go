@@ -8,13 +8,18 @@ import (
 	"strings"
 
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 	"github.com/lcoder/lcoder/pkg/tools"
 )
 
 // Grep searches file contents for a pattern.
 type Grep struct {
 	cwd string
+	sb  sandbox.Sandbox
 }
+
+// UseSandbox injects the sandbox used to enforce filesystem checks.
+func (g *Grep) UseSandbox(sb sandbox.Sandbox) { g.sb = sb }
 
 // NewGrep creates a grep tool.
 func NewGrep(cwd string) tools.Executable {
@@ -57,10 +62,10 @@ func (g *Grep) Execute(ctx context.Context, callID string, args map[string]any) 
 	if v, ok := args["path"].(string); ok && v != "" {
 		path = v
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(g.cwd, path)
+	path, err := resolveAndCheck(g.cwd, g.sb, path, sandbox.FSRead)
+	if err != nil {
+		return models.ToolResult{}, err
 	}
-	path = filepath.Clean(path)
 
 	var glob string
 	if v, ok := args["glob"].(string); ok {
@@ -68,8 +73,8 @@ func (g *Grep) Execute(ctx context.Context, callID string, args map[string]any) 
 	}
 
 	var matches []string
-	err := filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
+	err = filepath.WalkDir(path, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
 			return nil
 		}
 		if d.IsDir() {
@@ -81,8 +86,13 @@ func (g *Grep) Execute(ctx context.Context, callID string, args map[string]any) 
 				return nil
 			}
 		}
-		data, err := os.ReadFile(p)
-		if err != nil {
+		if g.sb != nil {
+			if cerr := g.sb.Filesystem().Check(p, sandbox.FSRead); cerr != nil {
+				return nil // skip out-of-bounds child
+			}
+		}
+		data, readErr := os.ReadFile(p)
+		if readErr != nil {
 			return nil
 		}
 		lines := strings.Split(string(data), "\n")

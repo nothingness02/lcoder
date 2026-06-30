@@ -4,16 +4,20 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 	"github.com/lcoder/lcoder/pkg/tools"
 )
 
 // Edit performs exact-text replacements in a file.
 type Edit struct {
 	cwd string
+	sb  sandbox.Sandbox
 }
+
+// UseSandbox injects the sandbox used to enforce filesystem checks.
+func (e *Edit) UseSandbox(sb sandbox.Sandbox) { e.sb = sb }
 
 // NewEdit creates an edit tool.
 func NewEdit(cwd string) tools.Executable {
@@ -61,10 +65,10 @@ func (e *Edit) Execute(ctx context.Context, callID string, args map[string]any) 
 	if !ok || path == "" {
 		return models.ToolResult{}, fmt.Errorf("missing path")
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(e.cwd, path)
+	path, err := resolveAndCheck(e.cwd, e.sb, path, sandbox.FSWrite)
+	if err != nil {
+		return models.ToolResult{}, err
 	}
-	path = filepath.Clean(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {

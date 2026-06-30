@@ -8,13 +8,18 @@ import (
 	"strings"
 
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 	"github.com/lcoder/lcoder/pkg/tools"
 )
 
 // Find searches for files by name pattern.
 type Find struct {
 	cwd string
+	sb  sandbox.Sandbox
 }
+
+// UseSandbox injects the sandbox used to enforce filesystem checks.
+func (f *Find) UseSandbox(sb sandbox.Sandbox) { f.sb = sb }
 
 // NewFind creates a find tool.
 func NewFind(cwd string) tools.Executable {
@@ -53,18 +58,23 @@ func (f *Find) Execute(ctx context.Context, callID string, args map[string]any) 
 	if v, ok := args["path"].(string); ok && v != "" {
 		path = v
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(f.cwd, path)
+	path, err := resolveAndCheck(f.cwd, f.sb, path, sandbox.FSRead)
+	if err != nil {
+		return models.ToolResult{}, err
 	}
-	path = filepath.Clean(path)
 
 	var matches []string
-	err := filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
+	err = filepath.WalkDir(path, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
 			return nil
 		}
 		if d.IsDir() {
 			return nil
+		}
+		if f.sb != nil {
+			if cerr := f.sb.Filesystem().Check(p, sandbox.FSRead); cerr != nil {
+				return nil // skip out-of-bounds child
+			}
 		}
 		matched, _ := filepath.Match(pattern, filepath.Base(p))
 		if matched {

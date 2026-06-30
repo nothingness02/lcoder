@@ -4,17 +4,21 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 	"github.com/lcoder/lcoder/pkg/tools"
 )
 
 // Read reads files with optional offset/limit.
 type Read struct {
 	cwd string
+	sb  sandbox.Sandbox
 }
+
+// UseSandbox injects the sandbox used to enforce filesystem checks.
+func (r *Read) UseSandbox(sb sandbox.Sandbox) { r.sb = sb }
 
 // NewRead creates a read tool.
 func NewRead(cwd string) tools.Executable {
@@ -52,10 +56,10 @@ func (r *Read) Execute(ctx context.Context, callID string, args map[string]any) 
 	if !ok || path == "" {
 		return models.ToolResult{}, fmt.Errorf("missing path")
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(r.cwd, path)
+	path, err := resolveAndCheck(r.cwd, r.sb, path, sandbox.FSRead)
+	if err != nil {
+		return models.ToolResult{}, err
 	}
-	path = filepath.Clean(path)
 
 	info, err := os.Stat(path)
 	if err != nil {

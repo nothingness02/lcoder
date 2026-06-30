@@ -3,18 +3,22 @@ package builtin
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 	"github.com/lcoder/lcoder/pkg/tools"
 )
 
 // Ls lists directory contents.
 type Ls struct {
 	cwd string
+	sb  sandbox.Sandbox
 }
+
+// UseSandbox injects the sandbox used to enforce filesystem checks.
+func (l *Ls) UseSandbox(sb sandbox.Sandbox) { l.sb = sb }
 
 // NewLs creates an ls tool.
 func NewLs(cwd string) tools.Executable {
@@ -43,10 +47,10 @@ func (l *Ls) Execute(ctx context.Context, callID string, args map[string]any) (m
 	if v, ok := args["path"].(string); ok && v != "" {
 		path = v
 	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(l.cwd, path)
+	path, err := resolveAndCheck(l.cwd, l.sb, path, sandbox.FSRead)
+	if err != nil {
+		return models.ToolResult{}, err
 	}
-	path = filepath.Clean(path)
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
