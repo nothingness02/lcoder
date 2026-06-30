@@ -20,6 +20,7 @@ import (
 	"github.com/lcoder/lcoder/pkg/models"
 	"github.com/lcoder/lcoder/pkg/observability"
 	"github.com/lcoder/lcoder/pkg/permissions"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 	"github.com/lcoder/lcoder/pkg/session"
 	"github.com/lcoder/lcoder/pkg/skills"
 	"github.com/lcoder/lcoder/pkg/tools"
@@ -143,7 +144,12 @@ func prepareAgent(cfg config.Config, cwd string) (*agentSetup, error) {
 
 	llmClient := llm.NewClient(buildEngine(cfg))
 
+	sb, err := sandbox.New(toSandboxConfig(cfg.Sandbox, cwd))
+	if err != nil {
+		return nil, fmt.Errorf("init sandbox: %w", err)
+	}
 	registry := tools.NewRegistry(cwd)
+	registry.SetSandbox(sb)
 	if err := registry.RegisterBuiltinFactories(cwd); err != nil {
 		return nil, fmt.Errorf("register built-in tools: %w", err)
 	}
