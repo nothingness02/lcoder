@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -45,8 +46,10 @@ func TestAllowlistAllowsAndDials(t *testing.T) {
 	}
 	defer ln.Close()
 	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
-	var port int
-	_, _ = fmtSscan(portStr, &port)
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
 
 	p := &allowlistNetwork{
 		defaultAllow: false,
@@ -67,11 +70,28 @@ func TestPassthroughNetworkSubprocessConfigEmpty(t *testing.T) {
 	}
 }
 
-func fmtSscan(s string, p *int) (int, error) {
-	n := 0
-	for _, r := range s {
-		n = n*10 + int(r-'0')
+func TestAllowlistAnyPortEntry(t *testing.T) {
+	// port 0 in an entry means "any port".
+	p := &allowlistNetwork{
+		defaultAllow: false,
+		entries:      []allowEntry{{host: "anyport.com", port: 0}},
+		dialer:       &net.Dialer{},
 	}
-	*p = n
-	return 1, nil
+	if !p.allowed("anyport.com", 8080) {
+		t.Fatal("port-0 entry should allow any port")
+	}
+	if !p.allowed("anyport.com", 443) {
+		t.Fatal("port-0 entry should allow any port")
+	}
+	if p.allowed("other.com", 443) {
+		t.Fatal("non-matching host must still be denied")
+	}
+}
+
+func TestAllowlistDefaultAllow(t *testing.T) {
+	// defaultAllow=true permits hosts that match no entry.
+	p := &allowlistNetwork{defaultAllow: true, dialer: &net.Dialer{}}
+	if !p.allowed("anything.com", 443) {
+		t.Fatal("defaultAllow=true should permit unmatched hosts")
+	}
 }

@@ -63,7 +63,10 @@ func (p *allowlistNetwork) DialContext(ctx context.Context, network, addr string
 	if err != nil {
 		return nil, fmt.Errorf("sandbox: bad address %q: %w", addr, err)
 	}
-	port, _ := strconv.Atoi(portStr)
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox: bad port in address %q: %w", addr, err)
+	}
 	if !p.allowed(host, port) {
 		return nil, fmt.Errorf("sandbox: network access to %s denied by policy", addr)
 	}
