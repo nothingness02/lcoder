@@ -10,13 +10,18 @@ import (
 	"time"
 
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 	"github.com/lcoder/lcoder/pkg/tools"
 )
 
 // Bash executes shell commands.
 type Bash struct {
 	cwd string
+	sb  sandbox.Sandbox
 }
+
+// UseSandbox injects the sandbox used to run commands.
+func (b *Bash) UseSandbox(sb sandbox.Sandbox) { b.sb = sb }
 
 // NewBash creates a bash tool.
 func NewBash(cwd string) tools.Executable {
@@ -67,6 +72,33 @@ func (b *Bash) Execute(ctx context.Context, callID string, args map[string]any) 
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "sh"
+	}
+
+	if b.sb != nil {
+		result, execErr := b.sb.Exec(ctx, sandbox.ExecSpec{
+			Command: command,
+			Cwd:     cwd,
+			Env:     os.Environ(),
+			Timeout: time.Duration(timeout) * time.Second,
+		})
+		output := result.Combined()
+		if result.TimedOut {
+			output += "\n[command timed out]"
+		}
+		res := models.ToolResult{
+			Content: []models.ContentPart{models.TextContent{Text: strings.TrimSpace(output)}},
+			Details: map[string]any{"command": command, "cwd": cwd},
+		}
+		if execErr != nil {
+			return res, fmt.Errorf("command failed: %w", execErr)
+		}
+		if result.TimedOut {
+			return res, fmt.Errorf("command failed: timed out")
+		}
+		if result.ExitCode != 0 {
+			return res, fmt.Errorf("command failed: exit code %d", result.ExitCode)
+		}
+		return res, nil
 	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
