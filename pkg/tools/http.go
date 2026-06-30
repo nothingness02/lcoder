@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 )
 
 // HTTPConfig describes an external HTTP tool.
@@ -32,6 +33,13 @@ type HTTPExecutable struct {
 // NewHTTPExecutable creates an HTTP tool executable.
 func NewHTTPExecutable(cfg HTTPConfig) *HTTPExecutable {
 	return &HTTPExecutable{cfg: cfg, client: &http.Client{}}
+}
+
+// UseSandbox routes the tool's HTTP client through the sandbox network policy.
+func (h *HTTPExecutable) UseSandbox(sb sandbox.Sandbox) {
+	h.client = &http.Client{
+		Transport: &http.Transport{DialContext: sb.Network().DialContext},
+	}
 }
 
 // Definition returns the tool schema exposed to the LLM.
