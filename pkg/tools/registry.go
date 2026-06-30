@@ -6,13 +6,15 @@ import (
 	"sync"
 
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/sandbox"
 )
 
 // Registry holds all available tools.
 type Registry struct {
-	mu     sync.RWMutex
-	tools  map[string]Executable
-	cwd    string
+	mu    sync.RWMutex
+	tools map[string]Executable
+	cwd   string
+	sb    sandbox.Sandbox
 }
 
 // NewRegistry creates an empty registry bound to a working directory.
@@ -23,11 +25,24 @@ func NewRegistry(cwd string) *Registry {
 	}
 }
 
+// SetSandbox sets the sandbox injected into SandboxAware tools at registration.
+// Call before registering tools so subsequent Register calls inject it.
+func (r *Registry) SetSandbox(sb sandbox.Sandbox) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sb = sb
+}
+
 // Register adds a tool to the registry.
 func (r *Registry) Register(name string, exec Executable) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.tools[name] = exec
+	if r.sb != nil {
+		if sa, ok := exec.(SandboxAware); ok {
+			sa.UseSandbox(r.sb)
+		}
+	}
 }
 
 // RegisterBuiltin adds a built-in tool factory.
