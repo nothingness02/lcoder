@@ -2,6 +2,7 @@ package agent
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/lcoder/lcoder/pkg/models"
@@ -38,6 +39,8 @@ func TestRuntimeSnapshotRoundTrip(t *testing.T) {
 
 	gotDeferred := ex2.activeDeferredNames()
 	wantDeferred := []string{"bash", "read"}
+	sort.Strings(gotDeferred)
+	sort.Strings(wantDeferred)
 	if !reflect.DeepEqual(gotDeferred, wantDeferred) {
 		t.Errorf("active deferred mismatch: got %v, want %v", gotDeferred, wantDeferred)
 	}
