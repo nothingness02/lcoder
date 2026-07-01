@@ -3,6 +3,7 @@ package contextmgr
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/lcoder/lcoder/pkg/models"
 )
@@ -87,8 +88,9 @@ type SummarizeFunc func(messages []models.AgentMessage) (string, error)
 
 // Manager manages structured context blocks within a token budget.
 type Manager struct {
-	budget     TokenBudget
-	blocks     []*Block
+	mu     sync.Mutex
+	budget TokenBudget
+	blocks []*Block
 	estimator  TokenEstimator
 	summarizer SummarizeFunc
 	policy     WindowPolicy
@@ -167,6 +169,21 @@ func (m *Manager) SetBudget(b TokenBudget) {
 // Budget returns the manager's current token budget.
 func (m *Manager) Budget() TokenBudget {
 	return m.budget
+}
+
+// Estimator returns the manager's token estimator.
+func (m *Manager) Estimator() TokenEstimator {
+	return m.estimator
+}
+
+// Summarizer returns the manager's summarizer.
+func (m *Manager) Summarizer() SummarizeFunc {
+	return m.summarizer
+}
+
+// WindowPolicy returns the manager's window policy.
+func (m *Manager) WindowPolicy() WindowPolicy {
+	return m.policy
 }
 
 // SetBlock replaces an existing block of the same kind and name, or appends it.
