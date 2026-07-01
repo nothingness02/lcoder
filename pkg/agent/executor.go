@@ -26,6 +26,18 @@ type executor struct {
 	activeDeferred map[string]bool
 }
 
+// newExecutor creates an executor with an initialized activeDeferred map.
+func newExecutor(cfg *Config, mgr *contextmgr.Manager, registry *tools.Registry, permissions *permissions.Engine, emitter *eventEmitter) *executor {
+	return &executor{
+		cfg:            cfg,
+		mgr:            mgr,
+		registry:       registry,
+		permissions:    permissions,
+		emitter:        emitter,
+		activeDeferred: make(map[string]bool),
+	}
+}
+
 func (e *executor) clone() *executor {
 	e.mu.Lock()
 	defer e.mu.Unlock()
