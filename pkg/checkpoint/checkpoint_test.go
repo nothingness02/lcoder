@@ -2,12 +2,14 @@ package checkpoint_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/lcoder/lcoder/pkg/checkpoint"
 	"github.com/lcoder/lcoder/pkg/contextmgr"
 	"github.com/lcoder/lcoder/pkg/models"
-	"github.com/stretchr/testify/require"
 )
 
 func TestCheckpointRoundTrip(t *testing.T) {
@@ -58,8 +60,15 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	require.False(t, got.CreatedAt.IsZero())
 	require.Equal(t, cp.Mode, got.Mode)
 	require.Equal(t, cp.Model, got.Model)
+	require.Equal(t, cp.Context.Budget, got.Context.Budget)
 	require.Len(t, got.Context.Blocks, 1)
 	require.Equal(t, string(contextmgr.BlockRecent), got.Context.Blocks[0].Kind)
+	require.Equal(t, cp.Context.Blocks[0].Name, got.Context.Blocks[0].Name)
+	require.Equal(t, cp.Context.Blocks[0].Priority, got.Context.Blocks[0].Priority)
+	require.Equal(t, cp.Context.Blocks[0].Stability, got.Context.Blocks[0].Stability)
+	require.Equal(t, cp.Context.Blocks[0].Metadata, got.Context.Blocks[0].Metadata)
+	require.Equal(t, cp.Context.Blocks[0].CacheHint, got.Context.Blocks[0].CacheHint)
+	require.Equal(t, cp.Context.Blocks[0].LastModifiedTurn, got.Context.Blocks[0].LastModifiedTurn)
 	require.Equal(t, "hello", got.Context.Blocks[0].Messages[0].Text())
 	require.Equal(t, []string{"reminder"}, got.Context.EphemeralReminders)
 	require.NotNil(t, got.Context.LastUsage)
@@ -87,5 +96,23 @@ func TestCheckpointVersionMismatch(t *testing.T) {
 
 	var got checkpoint.Checkpoint
 	err = json.Unmarshal(mutated, &got)
-	require.ErrorIs(t, err, checkpoint.ErrVersionMismatch)
+	require.True(t, errors.Is(err, checkpoint.ErrVersionMismatch))
+	require.ErrorContains(t, err, "99")
+}
+
+func TestCheckpointZeroVersionRejected(t *testing.T) {
+	var got checkpoint.Checkpoint
+	err := json.Unmarshal([]byte(`{"mode":"test"}`), &got)
+	require.True(t, errors.Is(err, checkpoint.ErrVersionMismatch))
+}
+
+func TestCheckpointMinimalRoundTrip(t *testing.T) {
+	cp := &checkpoint.Checkpoint{Mode: "minimal"}
+
+	data, err := json.Marshal(cp)
+	require.NoError(t, err)
+
+	var got checkpoint.Checkpoint
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.Equal(t, cp.Mode, got.Mode)
 }

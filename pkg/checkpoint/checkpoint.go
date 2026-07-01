@@ -4,6 +4,7 @@ package checkpoint
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/lcoder/lcoder/pkg/contextmgr"
@@ -25,7 +26,7 @@ type Checkpoint struct {
 
 // MarshalJSON sets default Version and CreatedAt before serialization.
 func (cp Checkpoint) MarshalJSON() ([]byte, error) {
-	if cp.Version == 0 {
+	if cp.Version == 0 || cp.Version != CurrentVersion {
 		cp.Version = CurrentVersion
 	}
 	if cp.CreatedAt.IsZero() {
@@ -43,7 +44,7 @@ func (cp *Checkpoint) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if aux.Version != CurrentVersion {
-		return ErrVersionMismatch
+		return fmt.Errorf("%w: got %d, want %d", ErrVersionMismatch, aux.Version, CurrentVersion)
 	}
 	return nil
 }
@@ -91,6 +92,7 @@ type Target interface {
 type Store interface {
 	Save(id string, cp *Checkpoint) error
 	Load(id string) (*Checkpoint, error)
+	// List returns the identifiers of all stored checkpoints.
 	List() ([]string, error)
 	Delete(id string) error
 }
