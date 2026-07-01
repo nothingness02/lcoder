@@ -232,7 +232,7 @@ func TestParallelToolCalls(t *testing.T) {
 
 	ctx := context.Background()
 	window, _ := client.ModelWindow(ctx, provider, model)
-	cfgBudget, _ := cfg.ResolveContextBudget(window)
+	cfgBudget, _ := cfg.ResolveContextBudget(window, 0)
 
 	wd, err := os.Getwd()
 	if err != nil {
