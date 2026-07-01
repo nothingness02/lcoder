@@ -3,9 +3,11 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lcoder/lcoder/pkg/agent"
+	"github.com/lcoder/lcoder/pkg/checkpoint"
 	"github.com/lcoder/lcoder/pkg/config"
 	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/llm"
@@ -16,7 +18,9 @@ import (
 
 // Run starts the TUI application.
 func Run(bus *events.Bus, ag *agent.Agent, sess *session.Session, store *session.Store, cwd, modelRef, themeStyle string, httpTools []HTTPToolItem, mcpRegistry *mcp.Registry, modeManager *agent.ModeManager, capabilities []string, llmClient *llm.Client, cfg config.Config, needsProviderSetup bool, loadedSkills ...skills.Skill) error {
-	model := NewModel(bus, ag, sess, store, cwd, sess.ID, modelRef, themeStyle, httpTools, mcpRegistry, modeManager, llmClient, cfg, nil, needsProviderSetup, loadedSkills...)
+	checkpointDir := filepath.Join(session.DefaultDir(), "checkpoints")
+	checkpointStore := checkpoint.NewFileStore(checkpointDir)
+	model := NewModel(bus, ag, sess, store, cwd, sess.ID, modelRef, themeStyle, httpTools, mcpRegistry, modeManager, llmClient, cfg, checkpointStore, needsProviderSetup, loadedSkills...)
 	model.SetCapabilities(capabilities)
 	defer model.Close()
 
@@ -38,7 +42,9 @@ func Run(bus *events.Bus, ag *agent.Agent, sess *session.Session, store *session
 
 // RunWithIO starts the TUI with custom input/output for testing.
 func RunWithIO(bus *events.Bus, ag *agent.Agent, sess *session.Session, store *session.Store, cwd, modelRef, themeStyle string, httpTools []HTTPToolItem, mcpRegistry *mcp.Registry, modeManager *agent.ModeManager, llmClient *llm.Client, cfg config.Config, input *os.File, output *os.File, loadedSkills ...skills.Skill) (tea.Model, error) {
-	model := NewModel(bus, ag, sess, store, cwd, sess.ID, modelRef, themeStyle, httpTools, mcpRegistry, modeManager, llmClient, cfg, nil, false, loadedSkills...)
+	checkpointDir := filepath.Join(session.DefaultDir(), "checkpoints")
+	checkpointStore := checkpoint.NewFileStore(checkpointDir)
+	model := NewModel(bus, ag, sess, store, cwd, sess.ID, modelRef, themeStyle, httpTools, mcpRegistry, modeManager, llmClient, cfg, checkpointStore, false, loadedSkills...)
 	defer model.Close()
 
 	program := tea.NewProgram(
