@@ -1,0 +1,399 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"sync"
+
+	"github.com/lcoder/lcoder/pkg/contextmgr"
+	"github.com/lcoder/lcoder/pkg/events"
+	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/permissions"
+	"github.com/lcoder/lcoder/pkg/tools"
+)
+
+// executor owns tool-call execution: validation, permission checks, registry
+// dispatch, hooks, and deferred tool promotion.
+type executor struct {
+	cfg         *Config
+	mgr         *contextmgr.Manager
+	registry    *tools.Registry
+	permissions *permissions.Engine
+	emitter     *eventEmitter
+
+	mu             sync.Mutex
+	activeDeferred map[string]bool
+}
+
+func (e *executor) clone() *executor {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	active := make(map[string]bool, len(e.activeDeferred))
+	for k, v := range e.activeDeferred {
+		active[k] = v
+	}
+	return &executor{
+		cfg:            e.cfg,
+		mgr:            e.mgr,
+		registry:       e.registry,
+		permissions:    e.permissions,
+		emitter:        e.emitter,
+		activeDeferred: active,
+	}
+}
+
+func (e *executor) execute(ctx context.Context, turn int, assistantMsg models.AgentMessage, calls []models.ToolCallContent, execMode models.ExecutionMode) ([]models.AgentMessage, bool) {
+	sequential := execMode == models.ExecutionSequential
+	if e.cfg.ModeManager != nil {
+		mode := e.cfg.ModeManager.Get(e.cfg.Mode)
+		if mode.ExecutionMode == "sequential" {
+			sequential = true
+		}
+	}
+	if !sequential {
+		for _, call := range calls {
+			if exec, ok := e.registry.Get(call.Name); ok {
+				if exec.Definition().ExecutionMode == models.ExecutionSequential {
+					sequential = true
+					break
+				}
+			}
+		}
+	}
+
+	if sequential {
+		return e.executeSequential(ctx, turn, assistantMsg, calls)
+	}
+	return e.executeParallel(ctx, turn, assistantMsg, calls)
+}
+
+func (e *executor) executeSequential(ctx context.Context, turn int, assistantMsg models.AgentMessage, calls []models.ToolCallContent) ([]models.AgentMessage, bool) {
+	var results []models.AgentMessage
+	allTerminate := true
+	for _, call := range calls {
+		resultMsg := e.executeOneToolCall(ctx, turn, assistantMsg, call)
+		results = append(results, resultMsg)
+		if !isToolResultTerminate(resultMsg) {
+			allTerminate = false
+		}
+	}
+	return results, allTerminate && len(calls) > 0
+}
+
+func (e *executor) executeParallel(ctx context.Context, turn int, assistantMsg models.AgentMessage, calls []models.ToolCallContent) ([]models.AgentMessage, bool) {
+	type pair struct {
+		call   models.ToolCallContent
+		result models.AgentMessage
+	}
+
+	var wg sync.WaitGroup
+	pairs := make([]pair, len(calls))
+	for i, call := range calls {
+		wg.Add(1)
+		go func(idx int, c models.ToolCallContent) {
+			defer wg.Done()
+			pairs[idx] = pair{call: c, result: e.executeOneToolCall(ctx, turn, assistantMsg, c)}
+		}(i, call)
+	}
+	wg.Wait()
+
+	var results []models.AgentMessage
+	allTerminate := true
+	for _, p := range pairs {
+		results = append(results, p.result)
+		if !isToolResultTerminate(p.result) {
+			allTerminate = false
+		}
+	}
+	return results, allTerminate && len(calls) > 0
+}
+
+func (e *executor) executeOneToolCall(ctx context.Context, turn int, assistantMsg models.AgentMessage, call models.ToolCallContent) models.AgentMessage {
+	// Normalize arguments first so validation sees a non-nil map.
+	args := call.Arguments
+	if args == nil {
+		args = make(map[string]any)
+	}
+
+	// tool_search is a meta-tool resolved locally: it never reaches the registry.
+	if call.Name == tools.ToolSearchName {
+		return e.handleToolSearch(ctx, turn, assistantMsg, call)
+	}
+
+	// Pre-execution argument validation. On failure we do NOT emit any tool
+	// events: the failed attempt stays invisible in the live TUI, and the error
+	// tool_result is fed back so the LLM can self-correct next turn.
+	if exec, ok := e.registry.Get(call.Name); ok {
+		if err := tools.ValidateArgs(exec.Definition(), args); err != nil {
+			return e.makeToolResultMessage(call, models.NewToolExecutionResultError(err.Error()), true)
+		}
+	}
+
+	// Permission check: engine decision + optional interactive confirmation.
+	info := ToolCallInfo{
+		AssistantMessage: assistantMsg,
+		ToolCall:         call,
+		Args:             args,
+		Context:          e.mgr.AllMessages(),
+	}
+	allowed, confirmErr := e.confirmToolCall(ctx, turn, info)
+	if confirmErr != nil || !allowed {
+		reason := "denied"
+		if confirmErr != nil {
+			reason = confirmErr.Error()
+		}
+		return e.makeToolResultMessage(call, models.NewToolExecutionResultError(reason), true)
+	}
+
+	e.emitter.emit(ctx, events.ToolExecutionStartEvent{
+		Base:       events.Base{Type: events.ToolExecutionStart, Turn: turn},
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Args:       call.Arguments,
+	})
+
+	// Declarative before-tool hooks (e.g. extensions) run after permission approval.
+	if e.cfg.BeforeToolCall != nil {
+		beforeResult, err := e.cfg.BeforeToolCall(ctx, ToolCallInfo{
+			AssistantMessage: assistantMsg,
+			ToolCall:         call,
+			Args:             args,
+			Context:          e.mgr.AllMessages(),
+		})
+		if err != nil {
+			return e.makeToolResultMessage(call, models.NewToolExecutionResultError(err.Error()), true)
+		}
+		if beforeResult != nil && beforeResult.Block {
+			return e.makeToolResultMessage(call, models.NewToolExecutionResultError(beforeResult.Reason), true)
+		}
+	}
+
+	result, isError := e.registry.Execute(ctx, call.ID, call.Name, args)
+
+	// Run after hook.
+	if e.cfg.AfterToolCall != nil {
+		afterResult, err := e.cfg.AfterToolCall(ctx, ToolCallResultInfo{
+			AssistantMessage: assistantMsg,
+			ToolCall:         call,
+			Args:             args,
+			Result:           result,
+			IsError:          isError,
+			Context:          e.mgr.AllMessages(),
+		})
+		if err != nil {
+			result = models.NewToolExecutionResultError(err.Error())
+			isError = true
+		} else if afterResult != nil {
+			if len(afterResult.Content) > 0 {
+				result.Content = afterResult.Content
+			}
+			if afterResult.Details != nil {
+				result.Details = afterResult.Details
+			}
+			if afterResult.IsError != nil {
+				isError = *afterResult.IsError
+			}
+			result.Terminate = afterResult.Terminate
+		}
+	}
+
+	e.emitter.emit(ctx, events.ToolExecutionEndEvent{
+		Base:       events.Base{Type: events.ToolExecutionEnd, Turn: turn},
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Result:     result,
+		IsError:    isError,
+	})
+
+	msg := e.makeToolResultMessage(call, result, isError)
+	e.emitter.emit(ctx, events.MessageStartEvent{
+		Base:    events.Base{Type: events.MessageStart, Turn: turn},
+		Message: msg,
+	})
+	e.emitter.emit(ctx, events.MessageEndEvent{
+		Base:    events.Base{Type: events.MessageEnd, Turn: turn},
+		Message: msg,
+	})
+
+	return msg
+}
+
+func (e *executor) makeToolResultMessage(call models.ToolCallContent, result models.ToolExecutionResult, isError bool) models.AgentMessage {
+	details := result.Details
+	if details == nil {
+		details = make(map[string]any)
+	}
+	details["terminate"] = result.Terminate
+	return models.NewAgentMessage(models.RoleToolResult, models.ToolResultContent{
+		ToolCallID: call.ID,
+		Name:       call.Name,
+		Content:    result.Content,
+		IsError:    isError,
+		Details:    details,
+	})
+}
+
+func isToolResultTerminate(msg models.AgentMessage) bool {
+	if len(msg.Content) == 0 {
+		return false
+	}
+	result, ok := msg.Content[0].(models.ToolResultContent)
+	if !ok {
+		return false
+	}
+	if result.Details == nil {
+		return false
+	}
+	v, ok := result.Details["terminate"].(bool)
+	return ok && v
+}
+
+func (e *executor) handleToolSearch(ctx context.Context, turn int, assistantMsg models.AgentMessage, call models.ToolCallContent) models.AgentMessage {
+	query := ""
+	if q, ok := call.Arguments["query"].(string); ok {
+		query = q
+	}
+
+	e.emitter.emit(ctx, events.ToolExecutionStartEvent{
+		Base:       events.Base{Type: events.ToolExecutionStart, Turn: turn},
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Args:       call.Arguments,
+	})
+
+	hits := e.registry.SearchTools(query)
+	for _, d := range hits {
+		e.activateDeferredTool(d.Name)
+	}
+	result := models.NewToolExecutionResultText(toolSearchResultText(hits))
+
+	e.emitter.emit(ctx, events.ToolExecutionEndEvent{
+		Base:       events.Base{Type: events.ToolExecutionEnd, Turn: turn},
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Result:     result,
+		IsError:    false,
+	})
+
+	return e.makeToolResultMessage(call, result, false)
+}
+
+func toolSearchResultText(hits []models.ToolDefinition) string {
+	if len(hits) == 0 {
+		return "No tools matched. Try a broader keyword."
+	}
+	schemas, err := json.Marshal(hits)
+	if err != nil {
+		var parts []string
+		for _, d := range hits {
+			parts = append(parts, d.Name)
+		}
+		return "Matched tools: " + strings.Join(parts, ", ") + ". You may now call them directly."
+	}
+	return "Matched tools (full schemas below):\n" + string(schemas) + "\nYou may now call them directly."
+}
+
+// baseToolDefinitions returns the tool definitions for the upcoming turn,
+// honoring deferred tool loading and any previously promoted deferred tools.
+func (e *executor) baseToolDefinitions() []models.ToolDefinition {
+	if !e.cfg.DeferredTools {
+		return e.registry.Definitions()
+	}
+	core := e.cfg.CoreTools
+	if len(core) == 0 {
+		core = DefaultCoreTools
+	}
+	active, deferred := e.registry.DeferredDefinitions(core...)
+
+	// Promote any deferred tools that have been loaded via tool_search.
+	promoted := e.activeDeferredNames()
+	for _, name := range promoted {
+		for i, stub := range deferred {
+			if stub.Name == name {
+				if exec, ok := e.registry.Get(name); ok {
+					deferred[i] = exec.Definition()
+				}
+				break
+			}
+		}
+	}
+
+	return append(active, deferred...)
+}
+
+func (e *executor) activateDeferredTool(name string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.activeDeferred == nil {
+		e.activeDeferred = make(map[string]bool)
+	}
+	e.activeDeferred[name] = true
+}
+
+func (e *executor) activeDeferredNames() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, 0, len(e.activeDeferred))
+	for k := range e.activeDeferred {
+		out = append(out, k)
+	}
+	return out
+}
+
+// confirmToolCall evaluates the permission engine and, if required, asks the
+// configured UserConfirmation handler. It returns true when the call may proceed.
+func (e *executor) confirmToolCall(ctx context.Context, turn int, info ToolCallInfo) (bool, error) {
+	decision := e.permissions.Decide(info.ToolCall.Name, info.Args)
+
+	var blocked bool
+	var blockReason string
+	allowed := decision == permissions.Allow
+	if decision == permissions.Deny {
+		blocked = true
+		blockReason = "denied by policy"
+	}
+
+	e.emitter.emit(ctx, events.AuditEvent{
+		Base:        events.Base{Type: events.Audit, Turn: turn},
+		ToolCallID:  info.ToolCall.ID,
+		ToolName:    info.ToolCall.Name,
+		Args:        info.Args,
+		Decision:    string(decision),
+		Allowed:     allowed,
+		Blocked:     blocked,
+		BlockReason: blockReason,
+	})
+
+	switch decision {
+	case permissions.Allow:
+		return true, nil
+	case permissions.Deny:
+		return false, nil
+	case permissions.Ask:
+		if e.cfg.UserConfirm == nil {
+			return false, nil
+		}
+		confirmed, err := e.cfg.UserConfirm.Confirm(ctx, info)
+		askBlockReason := ""
+		if err != nil {
+			askBlockReason = err.Error()
+		}
+		e.emitter.emit(ctx, events.AuditEvent{
+			Base:        events.Base{Type: events.Audit, Turn: turn},
+			ToolCallID:  info.ToolCall.ID,
+			ToolName:    info.ToolCall.Name,
+			Args:        info.Args,
+			Decision:    "ask",
+			Allowed:     err == nil && confirmed,
+			Blocked:     err != nil || !confirmed,
+			BlockReason: askBlockReason,
+		})
+		if err != nil {
+			return false, err
+		}
+		return confirmed, nil
+	default:
+		return true, nil
+	}
+}

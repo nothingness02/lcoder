@@ -48,10 +48,10 @@ func (f *Find) Definition() models.ToolDefinition {
 	}
 }
 
-func (f *Find) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (f *Find) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	pattern, ok := args["pattern"].(string)
 	if !ok || pattern == "" {
-		return models.ToolResult{}, fmt.Errorf("missing pattern")
+		return models.ToolExecutionResult{}, fmt.Errorf("missing pattern")
 	}
 
 	path := f.cwd
@@ -60,7 +60,7 @@ func (f *Find) Execute(ctx context.Context, callID string, args map[string]any) 
 	}
 	path, err := resolveAndCheck(f.cwd, f.sb, path, sandbox.FSRead)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	var matches []string
@@ -84,10 +84,10 @@ func (f *Find) Execute(ctx context.Context, callID string, args map[string]any) 
 		return nil
 	})
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content: []models.ContentPart{models.TextContent{Text: strings.Join(matches, "\n")}},
 		Details: map[string]any{"path": path, "matches": len(matches)},
 	}, nil

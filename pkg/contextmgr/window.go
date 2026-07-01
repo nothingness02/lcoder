@@ -1,6 +1,8 @@
 package contextmgr
 
 import (
+	"sort"
+
 	"github.com/lcoder/lcoder/pkg/models"
 )
 
@@ -40,24 +42,84 @@ func (p *KeepRecentInBudget) Apply(blocks []*Block, budget TokenBudget, mgr *Man
 func (p *KeepRecentInBudget) fitWithoutCompaction(blocks []*Block, budget TokenBudget, mgr *Manager) ([]*Block, error) {
 	var result []*Block
 	var tokens int
+	cap := budget.DropLimit()
 
 	for _, b := range blocks {
 		bt := mgr.EstimateTokens(b.Messages)
-		if tokens+bt <= budget.EffectiveInput() {
+		if tokens+bt <= cap {
 			result = append(result, b)
 			tokens += bt
 			continue
 		}
 		if b.Stability == StabilityDynamic {
 			// Try to keep the tail of a dynamic block.
-			kept := p.keepTail(b, budget.EffectiveInput()-tokens, mgr)
+			kept := p.keepTail(b, cap-tokens, mgr)
 			if len(kept.Messages) > 0 {
 				result = append(result, kept)
 			}
 		}
 		// Static/stable blocks that don't fit are dropped (should be rare).
 	}
+	result = p.enforceStaticRatio(result, budget, mgr)
 	return p.ensureLastUser(result, mgr)
+}
+
+// enforceStaticRatio drops the lowest-priority static/stable blocks when their
+// combined token count exceeds StaticRatio% of the effective input window.
+// BlockSystem/system is protected by its high priority and dropped only after
+// all lower-priority stable blocks have been removed.
+func (p *KeepRecentInBudget) enforceStaticRatio(blocks []*Block, budget TokenBudget, mgr *Manager) []*Block {
+	staticCap := staticRatioCap(budget)
+	if staticCap <= 0 {
+		return blocks
+	}
+
+	staticIdx := make([]int, 0, len(blocks))
+	staticTokens := 0
+	for i, b := range blocks {
+		if b.Stability == StabilityDynamic {
+			continue
+		}
+		staticIdx = append(staticIdx, i)
+		staticTokens += mgr.EstimateTokens(b.Messages)
+	}
+	if staticTokens <= staticCap {
+		return blocks
+	}
+
+	// Sort by priority ascending so the lowest-priority blocks are dropped first.
+	sort.Slice(staticIdx, func(i, j int) bool {
+		return blocks[staticIdx[i]].Priority < blocks[staticIdx[j]].Priority
+	})
+
+	for _, idx := range staticIdx {
+		if staticTokens <= staticCap {
+			break
+		}
+		staticTokens -= mgr.EstimateTokens(blocks[idx].Messages)
+		blocks[idx] = nil
+	}
+
+	compacted := make([]*Block, 0, len(blocks))
+	for _, b := range blocks {
+		if b != nil {
+			compacted = append(compacted, b)
+		}
+	}
+	return compacted
+}
+
+// staticRatioCap returns the maximum token budget for static/stable blocks.
+// A value of zero or >=100 disables the cap.
+func staticRatioCap(budget TokenBudget) int {
+	if budget.StaticRatio <= 0 || budget.StaticRatio >= 100 {
+		return 0
+	}
+	eff := budget.EffectiveInput()
+	if eff <= 0 {
+		return 0
+	}
+	return int(float64(eff) * float64(budget.StaticRatio) / 100.0)
 }
 
 func (p *KeepRecentInBudget) keepTail(b *Block, budget int, mgr *Manager) *Block {

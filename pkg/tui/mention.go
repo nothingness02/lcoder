@@ -91,7 +91,7 @@ func expandHomeMentions(text string) string {
 			for j < len(text) && !isMentionSpace(text[j]) {
 				j++
 			}
-			raw := text[i+1:j]
+			raw := text[i+1 : j]
 			if raw == "~" || strings.HasPrefix(raw, "~/") {
 				b.WriteString("@")
 				b.WriteString(filepath.ToSlash(expandHome(raw)))

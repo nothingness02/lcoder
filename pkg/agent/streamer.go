@@ -6,55 +6,62 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lcoder/lcoder/pkg/contextmgr"
 	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/llm"
+	"github.com/lcoder/lcoder/pkg/llm/provider"
 	"github.com/lcoder/lcoder/pkg/models"
+	"github.com/lcoder/lcoder/pkg/observability"
 )
 
-func (a *Agent) streamAssistant(ctx context.Context, turn int) (models.AgentMessage, error) {
+// streamer owns the LLM turn streaming logic. It builds the turn request,
+// applies optional context transforms, consumes provider events, and assembles
+// the assistant message.
+type streamer struct {
+	cfg     *Config
+	llm     *llm.Client
+	mgr     *contextmgr.Manager
+	obs     *observability.Collector
+	emitter *eventEmitter
+}
+
+// stream runs one assistant turn and returns the finalized assistant message.
+func (s *streamer) stream(ctx context.Context, turn int, modelRef models.ModelRef, tools []models.ToolDefinition, setAbort func(context.CancelFunc), clearAbort func()) (models.AgentMessage, error) {
 	streamCtx, streamCancel := context.WithCancel(ctx)
-	a.mu.Lock()
-	a.streamAbort = streamCancel
-	a.mu.Unlock()
+	setAbort(streamCancel)
 	defer func() {
-		a.mu.Lock()
-		a.streamAbort = nil
-		a.mu.Unlock()
+		clearAbort()
 		streamCancel()
 	}()
 
-	systemPrompt, tools, modelRef, execMode := a.applyMode()
+	req, err := s.mgr.BuildTurnRequest(modelRef, tools)
+	if err != nil {
+		return models.AgentMessage{}, fmt.Errorf("build turn request: %w", err)
+	}
 
-	var req models.TurnRequest
-	var err error
-	if a.cfg.TransformContext != nil {
-		messages := a.allMessages()
-		transformed, terr := a.cfg.TransformContext(ctx, messages)
+	if s.cfg.TransformContext != nil {
+		originalLen := len(req.Messages)
+		transformed, terr := s.cfg.TransformContext(ctx, req.Messages)
 		if terr != nil {
 			return models.AgentMessage{}, fmt.Errorf("transform context: %w", terr)
 		}
-		req = models.TurnRequest{
-			Model:        modelRef,
-			SystemPrompt: systemPrompt,
-			Messages:     transformed,
-			Tools:        tools,
-			Generation: models.GenerationConfig{
-				Temperature: 0.2,
-				MaxTokens:   4096,
-			},
-			Cache: "auto",
+		req.Messages = transformed
+		// Preserve cache breakpoints only when the transform kept the message
+		// count/order intact; otherwise recompute a safe minimal set.
+		if len(req.Messages) != originalLen {
+			req.CacheBreakpoints = minimalCacheBreakpoints(req.Messages)
 		}
-	} else {
-		req, err = a.mgr.BuildTurnRequest(modelRef, tools)
-		if err != nil {
-			return models.AgentMessage{}, fmt.Errorf("build turn request: %w", err)
-		}
+		// Recompute max_tokens against the transformed messages plus the system
+		// prompt so the output cap still fits inside the context window.
+		systemEstimate := s.mgr.EstimateTokens([]models.AgentMessage{
+			models.NewAgentMessage(models.RoleSystem, models.TextContent{Text: req.SystemPrompt}),
+		})
+		inputTokens := systemEstimate + s.mgr.EstimateTokens(req.Messages)
+		req.Generation.MaxTokens = s.mgr.Budget().ResolveMaxTokens(inputTokens)
 	}
 
-	_ = execMode
-
 	turnStartTime := time.Now()
-	stream, err := a.llm.StreamTurnRetry(ctx, req, llm.DefaultRetryConfig())
+	stream, err := s.llm.StreamTurnRetry(streamCtx, req, llm.DefaultRetryConfig())
 	if err != nil {
 		return models.AgentMessage{}, err
 	}
@@ -79,85 +86,79 @@ func (a *Agent) streamAssistant(ctx context.Context, turn int) (models.AgentMess
 			break
 		}
 
-		switch ev.Type() {
-		case "start":
+		switch ev.Kind {
+		case provider.KindStart:
 			partial = models.NewAgentMessage(models.RoleAssistant)
 			if !started {
 				started = true
-				_ = a.bus.Emit(ctx, events.MessageStartEvent{
+				s.emitter.emit(streamCtx, events.MessageStartEvent{
 					Base:    events.Base{Type: events.MessageStart, Turn: turn},
 					Message: partial,
 				})
 			}
-		case "text_delta", "thinking_delta":
+		case provider.KindTextDelta, provider.KindThinkingDelta:
 			if !started {
 				started = true
 				partial = models.NewAgentMessage(models.RoleAssistant)
-				_ = a.bus.Emit(ctx, events.MessageStartEvent{
+				s.emitter.emit(streamCtx, events.MessageStartEvent{
 					Base:    events.Base{Type: events.MessageStart, Turn: turn},
 					Message: partial,
 				})
 			}
-			if !ttftRecorded && a.obsCollector != nil {
+			if !ttftRecorded && s.obs != nil {
 				ttftRecorded = true
-				_ = a.obsCollector.RecordTTFT(turn, time.Since(turnStartTime).Milliseconds())
+				_ = s.obs.RecordTTFT(turn, time.Since(turnStartTime).Milliseconds())
 			}
-			delta, _ := ev.Payload["delta"].(string)
-			if ev.Type() == "text_delta" {
+			delta := ev.Delta
+			if ev.Kind == provider.KindTextDelta {
 				partial = updateText(partial, delta)
 			} else {
 				partial = updateThinking(partial, delta)
 			}
-			_ = a.bus.Emit(ctx, events.MessageUpdateEvent{
+			s.emitter.emit(streamCtx, events.MessageUpdateEvent{
 				Base:    events.Base{Type: events.MessageUpdate, Turn: turn},
 				Delta:   delta,
 				Message: partial,
 			})
-		case "toolcall_start", "toolcall_delta":
+		case provider.KindToolCallDelta:
 			if !started {
 				started = true
 				partial = models.NewAgentMessage(models.RoleAssistant)
-				_ = a.bus.Emit(ctx, events.MessageStartEvent{
+				s.emitter.emit(streamCtx, events.MessageStartEvent{
 					Base:    events.Base{Type: events.MessageStart, Turn: turn},
 					Message: partial,
 				})
 			}
-			call, _ := ev.Payload["tool_call"].(map[string]any)
-			partial = updateToolCall(partial, call, false)
-			_ = a.bus.Emit(ctx, events.MessageUpdateEvent{
+			s.emitter.emit(streamCtx, events.MessageUpdateEvent{
 				Base:    events.Base{Type: events.MessageUpdate, Turn: turn},
-				Delta:   formatToolCallDelta(call),
+				Delta:   ev.ArgumentsJSON,
 				Message: partial,
 			})
-		case "toolcall_end":
-			if !started {
-				started = true
-			}
-			msg, _ := ev.FinalMessage()
-			partial = msg
-		case "done":
+		case provider.KindDone:
 			msg, err := ev.FinalMessage()
 			if err != nil {
 				return partial, err
 			}
 			if !started {
-				_ = a.bus.Emit(ctx, events.MessageStartEvent{
+				s.emitter.emit(streamCtx, events.MessageStartEvent{
 					Base:    events.Base{Type: events.MessageStart, Turn: turn},
 					Message: msg,
 				})
 			}
-			_ = a.bus.Emit(ctx, events.MessageEndEvent{
+			s.emitter.emit(streamCtx, events.MessageEndEvent{
 				Base:    events.Base{Type: events.MessageEnd, Turn: turn},
 				Message: msg,
 			})
 			if usage, ok := ev.Usage(); ok {
-				usage.Provider = a.cfg.Model.Provider
-				usage.Model = a.cfg.Model.ID
-				_ = a.obsCollector.RecordLLMUsage(usage)
+				usage.Provider = s.cfg.Model.Provider
+				usage.Model = s.cfg.Model.ID
+				_ = s.obs.RecordLLMUsage(usage)
+				// Feed the provider's real prompt-token accounting back to the
+				// context manager so budget decisions use real counts.
+				s.mgr.RecordRealUsage(usage)
 			}
-			a.appendMessage(msg)
 			return msg, nil
-		case "error":
+		case provider.KindError:
 			if ge, ok := ev.Error(); ok {
 				return models.AgentMessage{}, ge
 			}
@@ -167,16 +168,15 @@ func (a *Agent) streamAssistant(ctx context.Context, turn int) (models.AgentMess
 
 	// Stream ended without a done event: use accumulated partial.
 	if !started {
-		_ = a.bus.Emit(ctx, events.MessageStartEvent{
+		s.emitter.emit(streamCtx, events.MessageStartEvent{
 			Base:    events.Base{Type: events.MessageStart, Turn: turn},
 			Message: partial,
 		})
 	}
-	_ = a.bus.Emit(ctx, events.MessageEndEvent{
+	s.emitter.emit(streamCtx, events.MessageEndEvent{
 		Base:    events.Base{Type: events.MessageEnd, Turn: turn},
 		Message: partial,
 	})
-	a.appendMessage(partial)
 	return partial, nil
 }
 
@@ -249,4 +249,23 @@ func formatToolCallDelta(call map[string]any) string {
 	}
 	b, _ := json.Marshal(call)
 	return string(b)
+}
+
+// minimalCacheBreakpoints returns a safe, minimal set of cache breakpoints for a
+// flat message list. It anchors the start of the non-system messages and the
+// last user turn, which is enough to make caching work after a custom context
+// transform has changed message count or order.
+func minimalCacheBreakpoints(msgs []models.AgentMessage) []int {
+	if len(msgs) == 0 {
+		return nil
+	}
+	var bps []int
+	bps = append(bps, 0)
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == models.RoleUser {
+			bps = append(bps, i)
+			break
+		}
+	}
+	return bps
 }

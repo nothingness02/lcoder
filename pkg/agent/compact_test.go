@@ -13,7 +13,7 @@ import (
 // agent 在每轮前调用 mgr.MaybeCompact;提交时发 CompactionCommitted 事件。
 func TestAgentEmitsCompactionCommitted(t *testing.T) {
 	mgr := contextmgr.NewManager(
-		contextmgr.TokenBudget{MaxTotal: 4000, TargetTotal: 800, ReserveOutput: 100},
+		contextmgr.TokenBudget{MaxTotal: 2000, TargetTotal: 100, ReserveOutput: 0},
 		contextmgr.WithSummarizer(func(msgs []models.AgentMessage) (string, error) { return "s", nil }),
 		contextmgr.WithMinRecent(2),
 	)

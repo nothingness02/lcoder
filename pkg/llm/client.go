@@ -3,7 +3,6 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/lcoder/lcoder/pkg/config"
@@ -39,53 +38,9 @@ func (c *Client) StreamTurn(ctx context.Context, req models.TurnRequest) (*TurnS
 	return &TurnStream{ch: out}, nil
 }
 
-// mapEvent translates a provider.Event into a GatewayEvent with the exact
-// payload shape the agent loop consumes (see Critical Contracts).
+// mapEvent translates a provider.Event into a GatewayEvent.
 func mapEvent(ev provider.Event) GatewayEvent {
-	switch ev.Kind {
-	case provider.KindStart:
-		return GatewayEvent{Name: "start", Payload: map[string]any{"type": "start"}}
-	case provider.KindTextDelta:
-		return GatewayEvent{Name: "text_delta", Payload: map[string]any{"type": "text_delta", "delta": ev.Delta}}
-	case provider.KindThinkingDelta:
-		return GatewayEvent{Name: "thinking_delta", Payload: map[string]any{"type": "thinking_delta", "delta": ev.Delta}}
-	case provider.KindToolCallDelta:
-		return GatewayEvent{Name: "toolcall_delta", Payload: map[string]any{
-			"type":            "toolcall_delta",
-			"tool_call_index": ev.ToolCallIndex,
-			"arguments_json":  ev.ArgumentsJSON,
-		}}
-	case provider.KindDone:
-		payload := map[string]any{"type": "done"}
-		// Message is a value type; on done it is always the finalized assistant
-		// message, so emit it unconditionally.
-		payload["message"] = jsonRoundTrip(ev.Message)
-		if ev.Usage != nil {
-			payload["usage"] = jsonRoundTrip(ev.Usage)
-		}
-		return GatewayEvent{Name: "done", Payload: payload}
-	case provider.KindError:
-		ge := GatewayError{Code: "internal", Message: "unknown error"}
-		if ev.Err != nil {
-			ge = GatewayError{Code: ev.Err.Code, Message: ev.Err.Message, ProviderError: ev.Err.ProviderError}
-		}
-		return GatewayEvent{Name: "error", Payload: map[string]any{"type": "error", "error": jsonRoundTrip(ge)}}
-	default:
-		return GatewayEvent{Name: "", Payload: map[string]any{}}
-	}
-}
-
-// jsonRoundTrip converts a typed value into the map/any shape that
-// GatewayEvent.FinalMessage/Usage/Error re-decode, so AgentMessage's custom
-// MarshalJSON is honored.
-func jsonRoundTrip(v any) any {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	var out any
-	_ = json.Unmarshal(data, &out)
-	return out
+	return GatewayEvent{Event: ev}
 }
 
 // RegisterProvider stores a provider connection on the engine (in-process).
@@ -109,75 +64,55 @@ func (c *Client) ModelWindow(ctx context.Context, prov, model string) (int, erro
 	return c.engine.ModelWindow(prov, model), nil
 }
 
+// ModelMaxOutput returns the catalog single-response output ceiling for
+// provider/model (0 if unknown).
+func (c *Client) ModelMaxOutput(ctx context.Context, prov, model string) (int, error) {
+	return c.engine.ModelMaxOutput(prov, model), nil
+}
+
 // Health reports in-process readiness.
 func (c *Client) Health(ctx context.Context) (map[string]string, error) {
 	return map[string]string{"status": "ok"}, nil
 }
 
-// GatewayEvent is a normalized event from the engine.
+// GatewayEvent is a normalized event from the engine. It wraps the strongly-typed
+// provider.Event so consumers can read typed fields directly instead of using
+// map[string]any payloads.
 type GatewayEvent struct {
-	Name    string
-	Raw     string
-	Payload map[string]any
+	provider.Event
 }
 
-// Type returns the payload type field if present.
+// Type returns the event type string (start, text_delta, etc.).
 func (e GatewayEvent) Type() string {
-	if t, ok := e.Payload["type"].(string); ok {
-		return t
-	}
-	return ""
+	return e.Kind.String()
 }
 
 // Usage extracts LLM usage from a "done" event if present.
 func (e GatewayEvent) Usage() (models.LLMUsage, bool) {
-	usageAny, ok := e.Payload["usage"]
-	if !ok {
+	if e.Kind != provider.KindDone || e.Event.Usage == nil {
 		return models.LLMUsage{}, false
 	}
-	data, err := json.Marshal(usageAny)
-	if err != nil {
-		return models.LLMUsage{}, false
-	}
-	var usage models.LLMUsage
-	if err := json.Unmarshal(data, &usage); err != nil {
-		return models.LLMUsage{}, false
-	}
-	return usage, true
+	return *e.Event.Usage, true
 }
 
 // FinalMessage extracts the final assistant message from a "done" event.
 func (e GatewayEvent) FinalMessage() (models.AgentMessage, error) {
-	msgAny, ok := e.Payload["message"]
-	if !ok {
-		return models.AgentMessage{}, fmt.Errorf("done event missing message")
+	if e.Kind != provider.KindDone {
+		return models.AgentMessage{}, fmt.Errorf("final message only available on done events")
 	}
-	data, err := json.Marshal(msgAny)
-	if err != nil {
-		return models.AgentMessage{}, err
-	}
-	var msg models.AgentMessage
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return models.AgentMessage{}, err
-	}
-	return msg, nil
+	return e.Event.Message, nil
 }
 
 // Error extracts a GatewayError from an "error" event.
 func (e GatewayEvent) Error() (GatewayError, bool) {
-	errAny, ok := e.Payload["error"]
-	if !ok {
+	if e.Kind != provider.KindError || e.Event.Err == nil {
 		return GatewayError{}, false
 	}
-	data, err := json.Marshal(errAny)
-	if err != nil {
-		return GatewayError{}, false
-	}
-	var ge GatewayError
-	if err := json.Unmarshal(data, &ge); err != nil {
-		return GatewayError{}, false
-	}
-	return ge, true
+	return GatewayError{
+		Code:          e.Event.Err.Code,
+		Message:       e.Event.Err.Message,
+		ProviderError: e.Event.Err.ProviderError,
+	}, true
 }
 
 // GatewayError is returned by the engine on failure.

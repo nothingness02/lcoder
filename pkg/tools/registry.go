@@ -80,14 +80,14 @@ func (r *Registry) Has(name string) bool {
 
 // Execute runs a tool by name. It returns the tool result and a flag indicating
 // whether the result represents an error.
-func (r *Registry) Execute(ctx context.Context, callID string, name string, args map[string]any) (models.ToolResult, bool) {
+func (r *Registry) Execute(ctx context.Context, callID string, name string, args map[string]any) (models.ToolExecutionResult, bool) {
 	exec, ok := r.Get(name)
 	if !ok {
-		return models.NewToolResultError(fmt.Sprintf("Unknown tool: %s", name)), true
+		return models.NewToolExecutionResultError(fmt.Sprintf("Unknown tool: %s", name)), true
 	}
 	result, err := exec.Execute(ctx, callID, args)
 	if err != nil {
-		return models.NewToolResultError(err.Error()), true
+		return models.NewToolExecutionResultError(err.Error()), true
 	}
 	return result, false
 }

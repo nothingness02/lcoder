@@ -2,8 +2,9 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
-	"sync"
 
 	"github.com/lcoder/lcoder/pkg/contextmgr"
 	"github.com/lcoder/lcoder/pkg/events"
@@ -13,6 +14,20 @@ import (
 	"github.com/lcoder/lcoder/pkg/permissions"
 	"github.com/lcoder/lcoder/pkg/tools"
 )
+
+// DefaultCoreTools is the always-loaded core set under deferred tool loading.
+// Everything else is reachable via tool_search.
+var DefaultCoreTools = []string{"read", "bash", "edit", "ls", "grep"}
+
+// ReminderProducer returns zero or more ephemeral system-reminder strings for the
+// upcoming turn, given the current conversation. Producers run at each turn start;
+// their output is injected for that turn only and cleared at the turn boundary.
+type ReminderProducer func(messages []models.AgentMessage) []string
+
+// UserConfirmation handles interactive permission approvals for tool calls.
+type UserConfirmation interface {
+	Confirm(ctx context.Context, info ToolCallInfo) (allow bool, err error)
+}
 
 // Config controls agent behavior.
 type Config struct {
@@ -27,27 +42,71 @@ type Config struct {
 	ShouldStop        ShouldStopFunc
 	Mode              string
 	ModeManager       *ModeManager
+
+	// UserConfirm handles interactive permission approvals. When the permission
+	// engine returns Ask, the agent calls Confirm and blocks the tool call until
+	// the user responds. CLI and TUI provide their own implementations.
+	UserConfirm UserConfirmation
+
+	// DeferredTools, when true, ships only CoreTools with full schemas plus
+	// the tool_search meta-tool; every other registered tool is sent as a
+	// name-only stub. tool_search is resolved locally (see executor.go),
+	// never executed by the registry.
+	DeferredTools bool
+
+	// CoreTools is the set of tool names that keep their full schema under
+	// deferred loading. Empty falls back to DefaultCoreTools.
+	CoreTools []string
+
+	// ReminderProducers return ephemeral system-reminder strings for the upcoming
+	// turn. They run at each turn start; their output is injected for that turn
+	// only and discarded at the turn boundary.
+	ReminderProducers []ReminderProducer
 }
 
-// Agent runs the LLM tool loop.
+// eventEmitter wraps the event bus and observability collector so subsystems
+// can emit events without holding a reference to the whole Agent.
+type eventEmitter struct {
+	bus *events.Bus
+	obs *observability.Collector
+}
+
+func (e *eventEmitter) emit(ctx context.Context, ev events.Event) {
+	if e == nil || e.bus == nil {
+		return
+	}
+	if err := e.bus.Emit(ctx, ev); err != nil {
+		if e.obs != nil {
+			_ = e.obs.RecordRuntimeError(err.Error())
+		} else {
+			fmt.Fprintf(os.Stderr, "event emit error: %v\n", err)
+		}
+	}
+}
+
+// emit routes events through the agent's emitter, lazily creating it if the
+// agent was constructed directly rather than via New/NewWithObservability.
+func (a *Agent) emit(ctx context.Context, ev events.Event) {
+	if a.emitter == nil {
+		a.emitter = &eventEmitter{bus: a.bus, obs: a.obsCollector}
+	}
+	a.emitter.emit(ctx, ev)
+}
+
+// Agent runs the LLM tool loop. It delegates streaming, tool execution, and
+// state management to internal components while remaining the public API surface.
 type Agent struct {
-	cfg        Config
-	mgr        *contextmgr.Manager
-	llm        *llm.Client
-	registry   *tools.Registry
-	permissions *permissions.Engine
-	bus        *events.Bus
+	cfg          Config
+	mgr          *contextmgr.Manager
+	llm          *llm.Client
+	registry     *tools.Registry
+	bus          *events.Bus
 	obsCollector *observability.Collector
+	emitter      *eventEmitter
 
-	mu            sync.Mutex
-	state         State
-	steeringQueue []models.AgentMessage
-	followUpQueue []models.AgentMessage
-
-	// Internal loop control.
-	abortCh     chan struct{}
-	abortOnce   sync.Once
-	streamAbort context.CancelFunc
+	loopState *stateHolder
+	streamer  *streamer
+	executor  *executor
 }
 
 // State describes the agent runtime state.
@@ -63,7 +122,8 @@ const (
 // It can be used for compaction, pruning, or injecting context.
 type TransformContext func(ctx context.Context, messages []models.AgentMessage) ([]models.AgentMessage, error)
 
-// BeforeToolCallHook runs after argument validation and may block execution.
+// BeforeToolCallHook runs after argument validation and permission approval and
+// may block execution.
 type BeforeToolCallHook func(ctx context.Context, info ToolCallInfo) (*BeforeToolCallResult, error)
 
 // ToolCallInfo is provided to hooks.
@@ -88,7 +148,7 @@ type ToolCallResultInfo struct {
 	AssistantMessage models.AgentMessage
 	ToolCall         models.ToolCallContent
 	Args             map[string]any
-	Result           models.ToolResult
+	Result           models.ToolExecutionResult
 	IsError          bool
 	Context          []models.AgentMessage
 }
@@ -119,26 +179,31 @@ func New(cfg Config, llmClient *llm.Client, registry *tools.Registry, perms *per
 			MaxTotal:      128000,
 			TargetTotal:   120000,
 			ReserveOutput: 8192,
+			MaxOutput:     16384,
 		})
 		mgr.SetBlock(contextmgr.NewBlock(contextmgr.BlockSystem, "system", contextmgr.StabilityStatic, 100,
 			models.NewAgentMessage(models.RoleSystem, models.TextContent{Text: cfg.SystemPrompt})))
 	}
-	return &Agent{
-		cfg:         cfg,
-		mgr:         mgr,
-		llm:         llmClient,
-		registry:    registry,
-		permissions: perms,
-		bus:         bus,
-		state:       StateIdle,
-		abortCh:     make(chan struct{}),
+	ag := &Agent{
+		cfg:      cfg,
+		mgr:      mgr,
+		llm:      llmClient,
+		registry: registry,
+		bus:      bus,
 	}
+	ag.emitter = &eventEmitter{bus: bus}
+	ag.loopState = newStateHolder()
+	ag.streamer = &streamer{cfg: &ag.cfg, llm: ag.llm, mgr: ag.mgr, emitter: ag.emitter}
+	ag.executor = &executor{cfg: &ag.cfg, mgr: ag.mgr, registry: ag.registry, permissions: perms, emitter: ag.emitter}
+	return ag
 }
 
 // NewWithObservability creates an agent with an observability collector.
 func NewWithObservability(cfg Config, llmClient *llm.Client, registry *tools.Registry, perms *permissions.Engine, bus *events.Bus, obs *observability.Collector) *Agent {
 	ag := New(cfg, llmClient, registry, perms, bus)
 	ag.obsCollector = obs
+	ag.emitter.obs = obs
+	ag.streamer.obs = obs
 	return ag
 }
 
@@ -149,51 +214,28 @@ func (a *Agent) Subscribe(handler events.Handler) func() {
 
 // State returns the current agent state.
 func (a *Agent) State() State {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.state
-}
-
-// setState updates the agent state.
-func (a *Agent) setState(s State) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.state = s
+	return a.loopState.State()
 }
 
 // Steer injects a user message during the next safe boundary.
 func (a *Agent) Steer(msg models.AgentMessage) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.steeringQueue = append(a.steeringQueue, msg)
+	a.loopState.Steer(msg)
 }
 
 // FollowUp queues a message after the agent would otherwise stop.
 func (a *Agent) FollowUp(msg models.AgentMessage) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.followUpQueue = append(a.followUpQueue, msg)
+	a.loopState.FollowUp(msg)
 }
 
 // Abort signals the current run to stop gracefully. Safe to call multiple times.
 func (a *Agent) Abort() {
-	a.mu.Lock()
-	cancel := a.streamAbort
-	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	a.abortOnce.Do(func() {
-		close(a.abortCh)
-	})
+	a.loopState.Abort()
 }
 
 // SwitchModel changes the model used for subsequent turns and re-sizes the
 // context budget in place. Conversation history is preserved. Intended to be
 // called from the TUI while the agent is idle (the provider overlay is modal).
 func (a *Agent) SwitchModel(ref models.ModelRef, budget contextmgr.TokenBudget) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.cfg.Model = ref
 	if a.mgr != nil {
 		a.mgr.SetBudget(budget)
@@ -202,16 +244,17 @@ func (a *Agent) SwitchModel(ref models.ModelRef, budget contextmgr.TokenBudget) 
 
 // SetMessages rebuilds the conversation from a flat message list.
 func (a *Agent) SetMessages(msgs []models.AgentMessage) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.mgr.SetMessages(msgs)
 }
 
 // AllMessages returns the full conversation from the context manager.
 func (a *Agent) AllMessages() []models.AgentMessage {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	return a.mgr.AllMessages()
+}
+
+// SetUserConfirm injects the interactive confirmation handler.
+func (a *Agent) SetUserConfirm(uc UserConfirmation) {
+	a.cfg.UserConfirm = uc
 }
 
 // Prompt starts a new agent run with a user message.
@@ -226,8 +269,6 @@ func (a *Agent) Continue(ctx context.Context) error {
 
 // Mode returns the active mode name.
 func (a *Agent) Mode() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	return a.cfg.Mode
 }
 
@@ -235,65 +276,82 @@ func (a *Agent) Mode() string {
 // It snapshots the current context manager so that mode-specific system prompts
 // are applied consistently and not repeatedly appended.
 func (a *Agent) WithMode(mode string) *Agent {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	cfg := a.cfg
+	steeringQueue := append([]models.AgentMessage(nil), a.loopState.DrainSteeringQueue()...)
+	followUpQueue := append([]models.AgentMessage(nil), a.loopState.DrainFollowUpQueue()...)
+	// Restore the drained queues on the original agent so the snapshot does not
+	// mutate it.
+	a.loopState.steeringQueue = steeringQueue
+	a.loopState.followUpQueue = followUpQueue
+
 	cfg.Mode = mode
 	return &Agent{
-		cfg:           cfg,
-		mgr:           a.mgr.Clone(),
-		llm:           a.llm,
-		registry:      a.registry,
-		permissions:   a.permissions,
-		bus:           a.bus,
-		obsCollector:  a.obsCollector,
-		state:         a.state,
-		steeringQueue: append([]models.AgentMessage(nil), a.steeringQueue...),
-		followUpQueue: append([]models.AgentMessage(nil), a.followUpQueue...),
-		abortCh:       a.abortCh,
+		cfg:          cfg,
+		mgr:          a.mgr.Clone(),
+		llm:          a.llm,
+		registry:     a.registry,
+		bus:          a.bus,
+		obsCollector: a.obsCollector,
+		emitter:      a.emitter,
+		loopState:    a.loopState.clone(steeringQueue, followUpQueue),
+		streamer:     a.streamer,
+		executor:     a.executor.clone(),
 	}
 }
 
 func (a *Agent) run(ctx context.Context, initialPrompts []models.AgentMessage) error {
-	a.setState(StateStreaming)
-	a.abortCh = make(chan struct{})
-	a.abortOnce = sync.Once{}
+	a.loopState.SetState(StateStreaming)
+	a.loopState.ResetAbort()
 
 	turn := 0
 	for _, msg := range initialPrompts {
 		a.appendMessage(msg)
 	}
 
-	_ = a.bus.Emit(ctx, events.AgentStartEvent{Base: events.Base{Type: events.AgentStart, Turn: turn}})
+	a.emit(ctx, events.AgentStartEvent{Base: events.Base{Type: events.AgentStart, Turn: turn}})
 
 	for {
-		pending := a.drainSteeringQueue()
+		pending := a.loopState.DrainSteeringQueue()
 		if len(pending) > 0 {
 			for _, msg := range pending {
 				a.appendMessage(msg)
 			}
 		}
 
-		_ = a.bus.Emit(ctx, events.TurnStartEvent{Base: events.Base{Type: events.TurnStart, Turn: turn}})
+		a.emit(ctx, events.TurnStartEvent{Base: events.Base{Type: events.TurnStart, Turn: turn}})
 
+		a.refreshEphemeralReminders()
 		a.maybeCompact(ctx, turn)
 
-		assistantMsg, err := a.streamAssistant(ctx, turn)
+		_, tools, modelRef, execMode := a.applyMode()
+
+		assistantMsg, err := a.streamer.stream(
+			ctx,
+			turn,
+			modelRef,
+			tools,
+			a.loopState.SetStreamAbort,
+			a.loopState.ClearStreamAbort,
+		)
 		if err != nil {
-			_ = a.bus.Emit(ctx, events.ErrorEvent{Base: events.Base{Type: events.Error, Turn: turn}, Message: err.Error()})
+			a.emit(ctx, events.ErrorEvent{Base: events.Base{Type: events.Error, Turn: turn}, Message: err.Error()})
 			break
 		}
+		a.appendMessage(assistantMsg)
 
 		toolCalls := assistantMsg.ToolCalls()
 		var toolResults []models.AgentMessage
 		terminate := false
 		if len(toolCalls) > 0 {
-			a.setState(StateExecutingTools)
-			toolResults, terminate = a.executeToolCalls(ctx, turn, assistantMsg, toolCalls)
-			a.setState(StateStreaming)
+			a.loopState.SetState(StateExecutingTools)
+			toolResults, terminate = a.executor.execute(ctx, turn, assistantMsg, toolCalls, execMode)
+			for _, r := range toolResults {
+				a.appendMessage(r)
+			}
+			a.loopState.SetState(StateStreaming)
 		}
 
-		_ = a.bus.Emit(ctx, events.TurnEndEvent{
+		a.emit(ctx, events.TurnEndEvent{
 			Base:        events.Base{Type: events.TurnEnd, Turn: turn},
 			Message:     assistantMsg,
 			ToolResults: toolResults,
@@ -310,7 +368,7 @@ func (a *Agent) run(ctx context.Context, initialPrompts []models.AgentMessage) e
 		}
 
 		if a.shouldStop(ctx, assistantMsg, toolResults) {
-			followUps := a.drainFollowUpQueue()
+			followUps := a.loopState.DrainFollowUpQueue()
 			if len(followUps) == 0 {
 				break
 			}
@@ -320,17 +378,30 @@ func (a *Agent) run(ctx context.Context, initialPrompts []models.AgentMessage) e
 		}
 	}
 
-	_ = a.bus.Emit(ctx, events.AgentEndEvent{
+	a.emit(ctx, events.AgentEndEvent{
 		Base:     events.Base{Type: events.AgentEnd, Turn: turn},
-		Messages: a.allMessages(),
+		Messages: a.mgr.AllMessages(),
 	})
-	a.setState(StateIdle)
+	a.loopState.SetState(StateIdle)
 	return nil
 }
 
+// refreshEphemeralReminders runs every producer over the current conversation
+// and stages the results on the context manager for this turn only.
+func (a *Agent) refreshEphemeralReminders() {
+	a.mgr.ClearEphemeralReminders()
+	if len(a.cfg.ReminderProducers) == 0 {
+		return
+	}
+	msgs := a.mgr.AllMessages()
+	var all []string
+	for _, p := range a.cfg.ReminderProducers {
+		all = append(all, p(msgs)...)
+	}
+	a.mgr.SetEphemeralReminders(all)
+}
+
 func (a *Agent) appendMessage(msg models.AgentMessage) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.mgr.AppendRecent(msg)
 }
 
@@ -340,34 +411,29 @@ func (a *Agent) appendMessage(msg models.AgentMessage) {
 // it surfaces as an Error event and the turn proceeds with the truncation
 // backstop in BuildTurnRequest.
 func (a *Agent) maybeCompact(ctx context.Context, turn int) {
-	a.mu.Lock()
-	committed, err := a.mgr.MaybeCompact()
-	a.mu.Unlock()
+	level, committed, err := a.mgr.MaybeCompactLeveled()
 	if err != nil {
-		_ = a.bus.Emit(ctx, events.ErrorEvent{
+		a.emit(ctx, events.ErrorEvent{
 			Base:    events.Base{Type: events.Error, Turn: turn},
 			Message: "compaction: " + err.Error(),
 		})
 		return
 	}
 	if committed {
-		_ = a.bus.Emit(ctx, events.CompactionCommittedEvent{
+		a.emit(ctx, events.CompactionCommittedEvent{
 			Base: events.Base{Type: events.CompactionCommitted, Turn: turn},
 		})
 	}
+	_ = level
 }
 
 // Stats returns context manager statistics if available.
 func (a *Agent) Stats() map[string]int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	return a.mgr.Stats()
 }
 
 // LatestAssistantMessage returns the most recent assistant message in context.
 func (a *Agent) LatestAssistantMessage() (models.AgentMessage, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	msgs := a.mgr.AllMessages()
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == models.RoleAssistant {
@@ -375,29 +441,6 @@ func (a *Agent) LatestAssistantMessage() (models.AgentMessage, bool) {
 		}
 	}
 	return models.AgentMessage{}, false
-}
-
-// allMessages returns the full message list from the context manager.
-func (a *Agent) allMessages() []models.AgentMessage {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.mgr.AllMessages()
-}
-
-func (a *Agent) drainSteeringQueue() []models.AgentMessage {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	msgs := a.steeringQueue
-	a.steeringQueue = nil
-	return msgs
-}
-
-func (a *Agent) drainFollowUpQueue() []models.AgentMessage {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	msgs := a.followUpQueue
-	a.followUpQueue = nil
-	return msgs
 }
 
 func (a *Agent) maxTurnsReached(turn int) bool {
@@ -419,7 +462,7 @@ func (a *Agent) applyMode() (string, []models.ToolDefinition, models.ModelRef, m
 		}
 	}
 
-	tools := a.registry.Definitions()
+	tools := a.executor.baseToolDefinitions()
 	modelRef := a.cfg.Model
 	execMode := a.cfg.ToolExecutionMode
 

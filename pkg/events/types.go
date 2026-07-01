@@ -94,10 +94,10 @@ type ToolExecutionUpdateEvent struct {
 // ToolExecutionEndEvent signals that a tool has finished.
 type ToolExecutionEndEvent struct {
 	Base
-	ToolCallID string           `json:"tool_call_id"`
-	ToolName   string           `json:"tool_name"`
-	Result     models.ToolResult `json:"result"`
-	IsError    bool             `json:"is_error"`
+	ToolCallID string                     `json:"tool_call_id"`
+	ToolName   string                     `json:"tool_name"`
+	Result     models.ToolExecutionResult `json:"result"`
+	IsError    bool                       `json:"is_error"`
 }
 
 // ErrorEvent reports a non-fatal runtime error.

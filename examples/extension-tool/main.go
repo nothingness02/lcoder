@@ -41,12 +41,12 @@ func (w *weatherTool) Definition() models.ToolDefinition {
 	}
 }
 
-func (w *weatherTool) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (w *weatherTool) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	city, _ := args["city"].(string)
 	if city == "" {
-		return models.NewToolResultError("city is required"), nil
+		return models.NewToolExecutionResultError("city is required"), nil
 	}
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content: []models.ContentPart{
 			models.TextContent{Text: fmt.Sprintf("The weather in %s is sunny, 24°C.", city)},
 		},

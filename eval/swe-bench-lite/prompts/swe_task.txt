@@ -1,0 +1,23 @@
+You are a software engineer working in the repository: {repo}
+Working directory: {workdir}
+
+A user reported the following issue:
+
+----- ISSUE -----
+{problem_statement}
+----- END ISSUE -----
+
+Your job:
+1. Explore the repository and locate the source code responsible for the issue.
+2. Implement a minimal fix at the ROOT CAUSE by actually EDITING the source
+   files. You must modify files with the edit/write tools — do not stop at
+   analysis or merely describe a fix.
+3. Validate your fix yourself: the official grading tests are HIDDEN from you,
+   so write your own small reproduction (e.g. a `python -c "..."` snippet or a
+   temporary script) that exercises the reported behavior, and run it to
+   confirm the behavior is now correct. Iterate until your reproduction passes.
+4. Do NOT modify any test files. Do NOT change unrelated code.
+
+Do not end your turn until you have BOTH (a) edited the source code AND
+(b) confirmed via your own reproduction that the reported issue is fixed.
+Only then end with a brief summary of what you changed and stop making tool calls.

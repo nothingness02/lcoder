@@ -76,7 +76,7 @@ func NewLLMSummarizer(client *llm.Client, model models.ModelRef) SummarizeFunc {
 			if !ok {
 				break
 			}
-			switch ev.Name {
+			switch ev.Type() {
 			case "done":
 				msg, err := ev.FinalMessage()
 				if err != nil {

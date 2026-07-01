@@ -11,7 +11,6 @@ import (
 	"github.com/lcoder/lcoder/pkg/agent/hooks"
 	"github.com/lcoder/lcoder/pkg/compaction"
 	"github.com/lcoder/lcoder/pkg/config"
-	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/llm/catalog"
 	"github.com/lcoder/lcoder/pkg/llm/engine"
 	llmprovider "github.com/lcoder/lcoder/pkg/llm/provider"
@@ -74,73 +73,21 @@ func makeTransformContext(keep int) agent.TransformContext {
 	}
 }
 
-func makeBeforeToolCall(bus *events.Bus, engine *permissions.Engine, hookCfg config.HookConfig) agent.BeforeToolCallHook {
-	declarative := hooks.FromConfig(hookCfg)
-	permissionHook := func(ctx context.Context, info agent.ToolCallInfo) (*agent.BeforeToolCallResult, error) {
-		decision := engine.Decide(info.ToolCall.Name, info.Args)
-
-		// Emit audit event for every permission decision.
-		var blocked bool
-		var blockReason string
-		allowed := decision == permissions.Allow
-		if decision == permissions.Deny {
-			blocked = true
-			blockReason = "denied by policy"
-		}
-
-		_ = bus.Emit(ctx, events.AuditEvent{
-			Base:        events.Base{Type: events.Audit},
-			ToolCallID:  info.ToolCall.ID,
-			ToolName:    info.ToolCall.Name,
-			Args:        info.Args,
-			Decision:    string(decision),
-			Allowed:     allowed,
-			Blocked:     blocked,
-			BlockReason: blockReason,
-		})
-
-		switch decision {
-		case permissions.Allow:
-			return nil, nil
-		case permissions.Deny:
-			return &agent.BeforeToolCallResult{Block: true, Reason: blockReason}, nil
-		case permissions.Ask:
-			result, err := askUser(ctx, info)
-			if err != nil {
-				return nil, err
-			}
-			// Emit follow-up audit event reflecting the interactive decision.
-			askBlockReason := ""
-			if result != nil {
-				askBlockReason = result.Reason
-			}
-			_ = bus.Emit(ctx, events.AuditEvent{
-				Base:        events.Base{Type: events.Audit},
-				ToolCallID:  info.ToolCall.ID,
-				ToolName:    info.ToolCall.Name,
-				Args:        info.Args,
-				Decision:    "ask",
-				Allowed:     result == nil || !result.Block,
-				Blocked:     result != nil && result.Block,
-				BlockReason: askBlockReason,
-			})
-			return result, nil
-		default:
-			return nil, nil
-		}
-	}
-
-	return hooks.CompositeBeforeToolCall(declarative, permissionHook)
+func makeBeforeToolCall(hookCfg config.HookConfig) agent.BeforeToolCallHook {
+	return hooks.FromConfig(hookCfg)
 }
 
-func askUser(ctx context.Context, info agent.ToolCallInfo) (*agent.BeforeToolCallResult, error) {
+// cliConfirm reads approval from stdin for CLI runs.
+type cliConfirm struct{}
+
+func (cliConfirm) Confirm(ctx context.Context, info agent.ToolCallInfo) (bool, error) {
 	fmt.Fprintf(os.Stderr, "\nPermission request: %s(%s)\nAllow? [y/N] ", info.ToolCall.Name, formatArgs(info.Args))
 	var line string
-	fmt.Fscanln(os.Stdin, &line)
-	if strings.EqualFold(strings.TrimSpace(line), "y") {
-		return nil, nil
+	if _, err := fmt.Fscanln(os.Stdin, &line); err != nil {
+		// EOF or empty newline counts as denial.
+		return false, nil
 	}
-	return &agent.BeforeToolCallResult{Block: true, Reason: "user denied"}, nil
+	return strings.EqualFold(strings.TrimSpace(line), "y"), nil
 }
 
 func formatArgs(args map[string]any) string {

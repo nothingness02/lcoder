@@ -13,8 +13,8 @@ func TestParsePermissionConfig(t *testing.T) {
 	pc := config.PermissionConfig{
 		Rules: map[string]map[string]string{
 			"bash": {
-				"*":       "ask",
-				"git *":   "allow",
+				"*":         "ask",
+				"git *":     "allow",
 				"go test *": "allow",
 			},
 		},

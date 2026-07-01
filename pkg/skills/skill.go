@@ -52,4 +52,3 @@ func (sb *stringsBuilder) Writef(format string, args ...any) {
 func (sb *stringsBuilder) String() string {
 	return strings.Join(sb.parts, "")
 }
-

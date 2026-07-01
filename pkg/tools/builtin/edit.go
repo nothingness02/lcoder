@@ -60,51 +60,51 @@ func (e *Edit) Definition() models.ToolDefinition {
 	}
 }
 
-func (e *Edit) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (e *Edit) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	path, ok := args["path"].(string)
 	if !ok || path == "" {
-		return models.ToolResult{}, fmt.Errorf("missing path")
+		return models.ToolExecutionResult{}, fmt.Errorf("missing path")
 	}
 	path, err := resolveAndCheck(e.cwd, e.sb, path, sandbox.FSWrite)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 	text := string(data)
 
 	editsRaw, ok := args["edits"].([]any)
 	if !ok || len(editsRaw) == 0 {
-		return models.ToolResult{}, fmt.Errorf("missing edits")
+		return models.ToolExecutionResult{}, fmt.Errorf("missing edits")
 	}
 
 	for _, raw := range editsRaw {
 		edit, ok := raw.(map[string]any)
 		if !ok {
-			return models.ToolResult{}, fmt.Errorf("invalid edit entry")
+			return models.ToolExecutionResult{}, fmt.Errorf("invalid edit entry")
 		}
 		oldText, ok := edit["oldText"].(string)
 		if !ok {
-			return models.ToolResult{}, fmt.Errorf("edit missing oldText")
+			return models.ToolExecutionResult{}, fmt.Errorf("edit missing oldText")
 		}
 		newText, ok := edit["newText"].(string)
 		if !ok {
-			return models.ToolResult{}, fmt.Errorf("edit missing newText")
+			return models.ToolExecutionResult{}, fmt.Errorf("edit missing newText")
 		}
 		if !containsOnce(text, oldText) {
-			return models.ToolResult{}, fmt.Errorf("oldText not found or not unique in %s", path)
+			return models.ToolExecutionResult{}, fmt.Errorf("oldText not found or not unique in %s", path)
 		}
 		text = replaceOnce(text, oldText, newText)
 	}
 
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content: []models.ContentPart{
 			models.TextContent{Text: fmt.Sprintf("Applied %d edit(s) to %s", len(editsRaw), path)},
 		},

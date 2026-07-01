@@ -33,10 +33,10 @@ type Hooks struct {
 
 // Info holds extension metadata from lcoder-extension.yaml.
 type Info struct {
-	Name        string         `yaml:"name"`
-	Version     string         `yaml:"version"`
-	Author      string         `yaml:"author"`
-	Description string         `yaml:"description"`
-	Entry       string         `yaml:"entry"`
+	Name         string         `yaml:"name"`
+	Version      string         `yaml:"version"`
+	Author       string         `yaml:"author"`
+	Description  string         `yaml:"description"`
+	Entry        string         `yaml:"entry"`
 	ConfigSchema map[string]any `yaml:"config_schema"`
 }

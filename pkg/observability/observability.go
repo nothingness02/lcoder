@@ -331,6 +331,22 @@ func (c *Collector) handle(ctx context.Context, ev events.Event) error {
 	return nil
 }
 
+// RecordRuntimeError records a non-fatal runtime error against the active run span.
+func (c *Collector) RecordRuntimeError(message string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rootSpan == nil {
+		return nil
+	}
+	c.rootSpan.Status = SpanError
+	c.rootSpan.Events = append(c.rootSpan.Events, SpanEvent{
+		Timestamp: time.Now().UnixMilli(),
+		Name:      "runtime_error",
+		Payload:   map[string]any{"message": message},
+	})
+	return nil
+}
+
 // Close releases resources held by the collector and exporter.
 func (c *Collector) Close() error {
 	var errs []error
@@ -416,7 +432,7 @@ func safeString(m map[string]any, key string) string {
 	return v
 }
 
-func toolResultErrorText(result models.ToolResult) string {
+func toolResultErrorText(result models.ToolExecutionResult) string {
 	var out string
 	for _, part := range result.Content {
 		if text, ok := part.(models.TextContent); ok {

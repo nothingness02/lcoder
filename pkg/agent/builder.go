@@ -14,13 +14,13 @@ import (
 
 // Builder constructs an Agent with a fluent, replaceable interface.
 type Builder struct {
-	cfg           Config
-	llmClient     *llm.Client
-	registry      *tools.Registry
-	permissions   *permissions.Engine
-	bus           *events.Bus
-	obsCollector  *observability.Collector
-	contextMgr    *contextmgr.Manager
+	cfg          Config
+	llmClient    *llm.Client
+	registry     *tools.Registry
+	permissions  *permissions.Engine
+	bus          *events.Bus
+	obsCollector *observability.Collector
+	contextMgr   *contextmgr.Manager
 }
 
 // NewBuilder creates a new Agent builder.
@@ -110,6 +110,20 @@ func (b *Builder) WithGatewayClient(c *llm.Client) *Builder {
 // WithRegistry sets the tool registry.
 func (b *Builder) WithRegistry(r *tools.Registry) *Builder {
 	b.registry = r
+	return b
+}
+
+// WithDeferredTools enables deferred tool loading with the given core set.
+// Passing no names uses DefaultCoreTools.
+func (b *Builder) WithDeferredTools(core ...string) *Builder {
+	b.cfg.DeferredTools = true
+	b.cfg.CoreTools = core
+	return b
+}
+
+// WithReminderProducer appends an ephemeral system-reminder producer.
+func (b *Builder) WithReminderProducer(p ReminderProducer) *Builder {
+	b.cfg.ReminderProducers = append(b.cfg.ReminderProducers, p)
 	return b
 }
 

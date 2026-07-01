@@ -16,10 +16,10 @@ type Package struct {
 
 // PackageInfo is the metadata from lcoder-package.yaml.
 type PackageInfo struct {
-	Name        string         `yaml:"name"`
-	Version     string         `yaml:"version"`
-	Author      string         `yaml:"author"`
-	Description string         `yaml:"description"`
+	Name         string         `yaml:"name"`
+	Version      string         `yaml:"version"`
+	Author       string         `yaml:"author"`
+	Description  string         `yaml:"description"`
 	ConfigSchema map[string]any `yaml:"config_schema"`
 }
 

@@ -50,10 +50,10 @@ func (b *Bash) Definition() models.ToolDefinition {
 	}
 }
 
-func (b *Bash) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (b *Bash) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	command, ok := args["command"].(string)
 	if !ok || command == "" {
-		return models.ToolResult{}, fmt.Errorf("missing command")
+		return models.ToolExecutionResult{}, fmt.Errorf("missing command")
 	}
 
 	timeout := 60
@@ -85,7 +85,7 @@ func (b *Bash) Execute(ctx context.Context, callID string, args map[string]any) 
 		if result.TimedOut {
 			output += "\n[command timed out]"
 		}
-		res := models.ToolResult{
+		res := models.ToolExecutionResult{
 			Content: []models.ContentPart{models.TextContent{Text: strings.TrimSpace(output)}},
 			Details: map[string]any{"command": command, "cwd": cwd},
 		}
@@ -114,13 +114,13 @@ func (b *Bash) Execute(ctx context.Context, callID string, args map[string]any) 
 		if cmdCtx.Err() == context.DeadlineExceeded {
 			output += "\n[command timed out]"
 		}
-		return models.ToolResult{
+		return models.ToolExecutionResult{
 			Content: []models.ContentPart{models.TextContent{Text: strings.TrimSpace(output)}},
 			Details: map[string]any{"command": command, "cwd": cwd},
 		}, fmt.Errorf("command failed: %w", err)
 	}
 
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content: []models.ContentPart{models.TextContent{Text: strings.TrimSpace(output)}},
 		Details: map[string]any{"command": command, "cwd": cwd},
 	}, nil

@@ -251,18 +251,21 @@ func (m *Model) commitProvider() {
 	}
 
 	window := 0
+	maxOutput := 0
 	if m.llmClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		window, _ = m.llmClient.ModelWindow(ctx, provName, modelID)
+		maxOutput, _ = m.llmClient.ModelMaxOutput(ctx, provName, modelID)
 	}
-	budget, _ := m.cfg.ResolveContextBudget(window)
+	budget, _ := m.cfg.ResolveContextBudget(window, maxOutput)
 	m.agent.SwitchModel(
 		models.ModelRef{Provider: provName, ID: modelID},
 		contextmgr.TokenBudget{
 			MaxTotal:         budget.MaxTotal,
 			TargetTotal:      budget.TargetTotal,
 			ReserveOutput:    budget.ReserveOutput,
+			MaxOutput:        budget.MaxOutput,
 			CompactThreshold: budget.CompactThreshold,
 		},
 	)
@@ -271,5 +274,3 @@ func (m *Model) commitProvider() {
 	m.header.model = m.model
 	m.closeProviderPanel()
 }
-
-

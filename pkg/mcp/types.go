@@ -36,15 +36,15 @@ func (e *ErrorObject) Error() string {
 
 // InitializeParams is sent on initialize.
 type InitializeParams struct {
-	ProtocolVersion string    `json:"protocolVersion"`
+	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    ClientCapabilities `json:"capabilities"`
-	ClientInfo      Info      `json:"clientInfo"`
+	ClientInfo      Info               `json:"clientInfo"`
 }
 
 // ClientCapabilities describes client capabilities.
 type ClientCapabilities struct {
-	Roots        *struct{} `json:"roots,omitempty"`
-	Sampling     *struct{} `json:"sampling,omitempty"`
+	Roots    *struct{} `json:"roots,omitempty"`
+	Sampling *struct{} `json:"sampling,omitempty"`
 }
 
 // Info identifies a client or server.

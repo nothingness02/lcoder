@@ -17,7 +17,7 @@ type HTTPToolItem struct {
 
 // ExtensionsPanelModel renders HTTP extension tools and MCP server status.
 type ExtensionsPanelModel struct {
-	HTTPTools []HTTPToolItem
+	HTTPTools  []HTTPToolItem
 	MCPServers []mcp.ServerStatus
 	Visible    bool
 }

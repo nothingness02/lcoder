@@ -16,7 +16,7 @@ type SessionItem struct {
 
 func (s SessionItem) FilterValue() string { return s.session.ID }
 
-func (s SessionItem) Title() string       { return s.session.ID }
+func (s SessionItem) Title() string { return s.session.ID }
 func (s SessionItem) Description() string {
 	return fmt.Sprintf("%d messages · %s", len(s.session.Messages), s.session.CWD)
 }
@@ -106,4 +106,3 @@ func (m SessionPickerModel) Selected() *session.Session {
 	}
 	return sess
 }
-

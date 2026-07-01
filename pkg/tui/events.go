@@ -115,7 +115,7 @@ func (m *Model) commitAssistant(id, content, thinking string, usage *blockUsage)
 }
 
 // finishTool patches the tool block identified by id with its result.
-func (m *Model) finishTool(id, name string, result models.ToolResult, isError bool) {
+func (m *Model) finishTool(id, name string, result models.ToolExecutionResult, isError bool) {
 	text := toolResultText(result)
 	for i := len(m.blocks) - 1; i >= 0; i-- {
 		if m.blocks[i].kind == blockTool && m.blocks[i].id == id {
@@ -189,8 +189,8 @@ func usagePtr(msg models.AgentMessage) *blockUsage {
 	}
 }
 
-// toolResultText renders a ToolResult to plain text.
-func toolResultText(result models.ToolResult) string {
+// toolResultText renders a ToolExecutionResult to plain text.
+func toolResultText(result models.ToolExecutionResult) string {
 	var out string
 	for _, part := range result.Content {
 		if text, ok := part.(models.TextContent); ok {

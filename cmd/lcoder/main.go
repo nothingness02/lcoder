@@ -224,7 +224,8 @@ func prepareAgent(cfg config.Config, cwd string) (*agentSetup, error) {
 	}
 
 	window, _ := llmClient.ModelWindow(context.Background(), cfg.Provider, cfg.Model)
-	budget, source := cfg.ResolveContextBudget(window)
+	maxOutput, _ := llmClient.ModelMaxOutput(context.Background(), cfg.Provider, cfg.Model)
+	budget, source := cfg.ResolveContextBudget(window, maxOutput)
 	if source == "default" {
 		fmt.Fprintf(os.Stderr, "warning: 未能自动获取模型 %q 的上下文窗口,回退默认 %d\n", cfg.Model, budget.MaxTotal)
 	}
@@ -236,15 +237,18 @@ func prepareAgent(cfg config.Config, cwd string) (*agentSetup, error) {
 			MaxTurns:          agentsetup.DefaultMaxTurns,
 			ToolExecutionMode: models.ExecutionParallel,
 			ContextManager:    mgr,
-			BeforeToolCall:    makeBeforeToolCall(bus, permEngine, cfg.Hooks),
+			BeforeToolCall:    makeBeforeToolCall(cfg.Hooks),
 			Mode:              modeName,
 			ModeManager:       modeManager,
+			DeferredTools:     cfg.Context.DeferredTools,
+			CoreTools:         cfg.Context.CoreTools,
 		}).
 		WithGatewayClient(llmClient).
 		WithRegistry(registry).
 		WithPermissions(permEngine).
 		WithEventBus(bus).
 		WithObservability(obsCollector).
+		WithReminderProducer(agent.UnresolvedTodosReminder).
 		Build()
 	if err != nil {
 		mcpRegistry.Close()
@@ -300,6 +304,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 }
 
 func runJSONMode(ctx context.Context, setup *agentSetup, prompt string) error {
+	setup.ag.SetUserConfirm(cliConfirm{})
 	var msg models.AgentMessage
 	if prompt != "" {
 		msg = models.NewAgentMessage(models.RoleUser, models.TextContent{Text: prompt})
@@ -332,6 +337,7 @@ func runJSONMode(ctx context.Context, setup *agentSetup, prompt string) error {
 }
 
 func runOneShot(ctx context.Context, setup *agentSetup, prompt string) error {
+	setup.ag.SetUserConfirm(cliConfirm{})
 	fmt.Printf("[lcoder] session=%s mode=%s\n", setup.sess.ID, modeName)
 
 	// Persist after each assistant/tool message turn.

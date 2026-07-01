@@ -1,7 +1,11 @@
 // pkg/llm/turnstream.go
 package llm
 
-import "context"
+import (
+	"context"
+
+	"github.com/lcoder/lcoder/pkg/llm/provider"
+)
 
 // TurnStream yields normalized events from an in-process engine stream.
 type TurnStream struct {
@@ -22,7 +26,7 @@ func (s *TurnStream) Next(ctx context.Context) (GatewayEvent, bool, error) {
 			s.done = true
 			return GatewayEvent{}, false, nil
 		}
-		if ev.Name == "done" || ev.Name == "error" {
+		if ev.Kind == provider.KindDone || ev.Kind == provider.KindError {
 			s.done = true
 		}
 		return ev, true, nil

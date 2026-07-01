@@ -70,18 +70,19 @@ type TUIConfig struct {
 
 // ContextConfig controls structured context manager behavior.
 type ContextConfig struct {
-	Mode             string  `yaml:"mode"`              // "auto", "manual", "off"
-	MaxTokens        int     `yaml:"max_tokens"`        // hard context budget
-	TargetTokens     int     `yaml:"target_tokens"`     // soft target budget
-	ReserveOutput    int     `yaml:"reserve_output"`    // output reservation
-	StaticRatio      int     `yaml:"static_ratio"`      // ratio percentage for static/stable blocks
-	MinRecent        int     `yaml:"min_recent"`        // minimum recent messages to keep
-	AutoCompact      bool    `yaml:"auto_compact"`      // enable automatic compaction
-	CompactThreshold float64 `yaml:"compact_threshold"` // ratio of target at which compaction starts
-	CacheHintPolicy  string  `yaml:"cache_hint_policy"` // "default", "aggressive", "none"
-	DeferredTools    bool    `yaml:"deferred_tools"`    // ship only core tools + tool_search
-	CoreTools        []string `yaml:"core_tools"`       // tools kept full under deferral
-	DropThreshold    float64 `yaml:"drop_threshold"`    // ratio of effective input at which old msgs drop
+	Mode             string   `yaml:"mode"`              // "auto", "manual", "off"
+	MaxTokens        int      `yaml:"max_tokens"`        // hard context budget
+	TargetTokens     int      `yaml:"target_tokens"`     // soft target budget
+	ReserveOutput    int      `yaml:"reserve_output"`    // output reservation
+	MaxOutput        int      `yaml:"max_output"`        // user cap on single-response output tokens (0 = no cap)
+	StaticRatio      int      `yaml:"static_ratio"`      // ratio percentage for static/stable blocks
+	MinRecent        int      `yaml:"min_recent"`        // minimum recent messages to keep
+	AutoCompact      bool     `yaml:"auto_compact"`      // enable automatic compaction
+	CompactThreshold float64  `yaml:"compact_threshold"` // ratio of target at which compaction starts
+	CacheHintPolicy  string   `yaml:"cache_hint_policy"` // "default", "aggressive", "none"
+	DeferredTools    bool     `yaml:"deferred_tools"`    // ship only core tools + tool_search
+	CoreTools        []string `yaml:"core_tools"`        // tools kept full under deferral
+	DropThreshold    float64  `yaml:"drop_threshold"`    // ratio of effective input at which old msgs drop
 }
 
 // Config is the full Lcoder configuration.
@@ -98,7 +99,7 @@ type Config struct {
 	Packages    []PackageConfig         `yaml:"packages"`
 	Providers   map[string]ProviderConn `yaml:"providers"`
 	Sandbox     SandboxConfig           `yaml:"sandbox"`
-
+	// Language    string                  `yaml:"language"`
 	// Catalog is the shared model metadata loaded from models.yaml (not parsed
 	// from the main config file). ModelsConfigPath is its resolved location.
 	Catalog          ModelCatalog `yaml:"-"`
@@ -116,6 +117,7 @@ func DefaultConfig() Config {
 			MaxTokens:        0, // 0 = unset; resolved from catalog/engine at runtime
 			TargetTokens:     0, // 0 = unset; derived from MaxTotal when missing
 			ReserveOutput:    0, // 0 = unset; falls back to defaultReserveOutput
+			MaxOutput:        0, // 0 = unset; no user cap on output tokens
 			StaticRatio:      60,
 			MinRecent:        10,
 			AutoCompact:      true,
@@ -149,19 +151,27 @@ const (
 	fallbackMaxTokens    = 128000
 	defaultReserveOutput = 8192
 	defaultTargetRatio   = 0.9
+	// fallbackOutputCeiling caps single-response output when the model's real
+	// ceiling is unknown from every source. A coding turn must both reason and
+	// emit a tool call, so this is generous relative to the 4096 many APIs
+	// default to, yet small enough that no gateway rejects it.
+	fallbackOutputCeiling = 16384
 )
 
 // ResolveContextBudget returns the effective context budget for the configured
 // model, plus the source that determined MaxTotal ("user", "catalog",
-// "discovered", or "default"). discoveredWindow is the window looked up from the
-// LLM engine/catalog at startup (0 if unknown); pass 0 for fully offline resolution.
+// "discovered", or "default"). discoveredWindow is the context window looked up
+// from the LLM engine/catalog at startup (0 if unknown); discoveredMaxOutput is
+// the model's single-response output ceiling discovered the same way (0 if
+// unknown). Pass 0 for both for fully offline resolution.
 //
 // Priority per field:
 //
 //	MaxTotal:      user context.max_tokens > catalog context_window > discovered window > fallback
 //	ReserveOutput: user context.reserve_output > catalog budget.reserve_output > default
 //	TargetTotal:   user context.target_tokens > catalog budget.target > MaxTotal * ratio
-func (c Config) ResolveContextBudget(discoveredWindow int) (TokenBudget, string) {
+//	MaxOutput:     min( user context.max_output , [catalog budget.max_output > discovered output > fallback ceiling] )
+func (c Config) ResolveContextBudget(discoveredWindow, discoveredMaxOutput int) (TokenBudget, string) {
 	cfg := c.Context
 	meta, hasMeta := c.Catalog.Lookup(c.Model)
 
@@ -199,6 +209,23 @@ func (c Config) ResolveContextBudget(discoveredWindow int) (TokenBudget, string)
 		target = int(float64(maxTotal) * defaultTargetRatio)
 	}
 
+	// MaxOutput (the model's single-response output ceiling). Determine the
+	// physical ceiling from the most trustworthy source, then clamp by any
+	// explicit user cap — never let the user request more than the model emits.
+	ceiling := 0
+	if hasMeta && meta.Budget.MaxOutput > 0 {
+		ceiling = meta.Budget.MaxOutput
+	}
+	if ceiling <= 0 && discoveredMaxOutput > 0 {
+		ceiling = discoveredMaxOutput
+	}
+	if ceiling <= 0 {
+		ceiling = fallbackOutputCeiling
+	}
+	if cfg.MaxOutput > 0 && cfg.MaxOutput < ceiling {
+		ceiling = cfg.MaxOutput
+	}
+
 	threshold := cfg.CompactThreshold
 	if threshold <= 0 || threshold > 1 {
 		threshold = 0.9
@@ -213,6 +240,7 @@ func (c Config) ResolveContextBudget(discoveredWindow int) (TokenBudget, string)
 		MaxTotal:         maxTotal,
 		TargetTotal:      target,
 		ReserveOutput:    reserve,
+		MaxOutput:        ceiling,
 		CompactThreshold: threshold,
 		DropThreshold:    dropThreshold,
 	}, source
@@ -223,6 +251,7 @@ type TokenBudget struct {
 	MaxTotal         int
 	TargetTotal      int
 	ReserveOutput    int
+	MaxOutput        int
 	CompactThreshold float64
 	DropThreshold    float64
 }
@@ -244,6 +273,7 @@ func Load() (Config, error) {
 			"max_tokens":        cfg.Context.MaxTokens,
 			"target_tokens":     cfg.Context.TargetTokens,
 			"reserve_output":    cfg.Context.ReserveOutput,
+			"max_output":        cfg.Context.MaxOutput,
 			"static_ratio":      cfg.Context.StaticRatio,
 			"min_recent":        cfg.Context.MinRecent,
 			"auto_compact":      cfg.Context.AutoCompact,

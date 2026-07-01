@@ -96,7 +96,7 @@ func TestCatalogDrivesContextBudget(t *testing.T) {
 		Budget:        ModelBudget{Target: 180000, ReserveOutput: 8192},
 	}}}
 
-	b, source := cfg.ResolveContextBudget(0)
+	b, source := cfg.ResolveContextBudget(0, 0)
 	if source != "catalog" {
 		t.Fatalf("expected source catalog, got %q", source)
 	}

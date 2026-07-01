@@ -51,27 +51,27 @@ func (r *Read) Definition() models.ToolDefinition {
 	}
 }
 
-func (r *Read) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (r *Read) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	path, ok := args["path"].(string)
 	if !ok || path == "" {
-		return models.ToolResult{}, fmt.Errorf("missing path")
+		return models.ToolExecutionResult{}, fmt.Errorf("missing path")
 	}
 	path, err := resolveAndCheck(r.cwd, r.sb, path, sandbox.FSRead)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	info, err := os.Stat(path)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 	if info.IsDir() {
-		return models.ToolResult{}, fmt.Errorf("path is a directory: %s", path)
+		return models.ToolExecutionResult{}, fmt.Errorf("path is a directory: %s", path)
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	text := string(data)
@@ -102,7 +102,7 @@ func (r *Read) Execute(ctx context.Context, callID string, args map[string]any) 
 	}
 
 	selected := strings.Join(lines[start:end], "\n")
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content: []models.ContentPart{
 			models.TextContent{Text: selected},
 		},

@@ -32,6 +32,27 @@ func TestBuildSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestContextManagerBlocksSetCacheHint(t *testing.T) {
+	cfg := config.Config{Context: config.ContextConfig{MinRecent: 1}}
+	mgr := NewContextManager(cfg, config.TokenBudget{MaxTotal: 100000, TargetTotal: 90000, ReserveOutput: 8192}, nil, "project context here", "skill block here", nil)
+
+	pd, ok := mgr.GetBlock(contextmgr.BlockProjectDocs, "project_docs")
+	if !ok {
+		t.Fatal("missing project_docs block")
+	}
+	if pd.CacheHint != contextmgr.CacheHintBreakpoint {
+		t.Fatalf("project_docs block should have CacheHintBreakpoint, got %q", pd.CacheHint)
+	}
+
+	sk, ok := mgr.GetBlock(contextmgr.BlockSkills, "skills")
+	if !ok {
+		t.Fatal("missing skills block")
+	}
+	if sk.CacheHint != contextmgr.CacheHintBreakpoint {
+		t.Fatalf("skills block should have CacheHintBreakpoint, got %q", sk.CacheHint)
+	}
+}
+
 // TestBuildSystemPromptBlockIndependence ensures context/skills blocks are
 // provided separately and assembled by the context manager without duplicating
 // them inside the system block.

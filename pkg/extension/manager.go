@@ -9,8 +9,8 @@ import (
 
 // Manager coordinates installed extensions and packages.
 type Manager struct {
-	loader  *Loader
-	root    string
+	loader *Loader
+	root   string
 }
 
 // NewManager creates a manager rooted at the given directory.

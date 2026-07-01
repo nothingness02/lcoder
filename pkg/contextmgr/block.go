@@ -39,6 +39,28 @@ const (
 	CacheHintSkip       CacheHint = "skip"       // Not worth caching
 )
 
+// CacheHintPolicy controls how aggressively BuildTurnRequest places cache
+// breakpoints. It maps the config string context.cache_hint_policy.
+type CacheHintPolicy string
+
+const (
+	CachePolicyDefault    CacheHintPolicy = "default"    // prefix breakpoint when stable prefix >= 256 tokens
+	CachePolicyAggressive CacheHintPolicy = "aggressive" // prefix breakpoint whenever any stable prefix exists
+	CachePolicyNone       CacheHintPolicy = "none"       // no automatic breakpoints
+)
+
+// ParseCacheHintPolicy maps a config string to a policy, defaulting to default.
+func ParseCacheHintPolicy(s string) CacheHintPolicy {
+	switch CacheHintPolicy(s) {
+	case CachePolicyAggressive:
+		return CachePolicyAggressive
+	case CachePolicyNone:
+		return CachePolicyNone
+	default:
+		return CachePolicyDefault
+	}
+}
+
 // Block is a unit of context with metadata for budgeting and caching.
 type Block struct {
 	Kind      BlockKind
@@ -63,6 +85,13 @@ func NewBlock(kind BlockKind, name string, stability Stability, priority int, ms
 		Messages:  msgs,
 		Metadata:  make(map[string]any),
 	}
+}
+
+// NewBlockWithCacheHint creates a block with a cache-placement hint.
+func NewBlockWithCacheHint(kind BlockKind, name string, stability Stability, priority int, hint CacheHint, msgs ...models.AgentMessage) *Block {
+	b := NewBlock(kind, name, stability, priority, msgs...)
+	b.CacheHint = hint
+	return b
 }
 
 // Text returns the concatenated text of all messages in the block.

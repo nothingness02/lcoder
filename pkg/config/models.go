@@ -21,6 +21,10 @@ type ModelPricing struct {
 type ModelBudget struct {
 	Target        int `yaml:"target"`
 	ReserveOutput int `yaml:"reserve_output"`
+	// MaxOutput is the model's official single-response output ceiling (max
+	// tokens the API will emit in one turn). 0 = unknown. Overrides any value
+	// auto-discovered from models.dev; needed for models the catalog lacks.
+	MaxOutput int `yaml:"max_output"`
 }
 
 // ModelMeta is one model entry in the shared catalog.

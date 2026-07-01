@@ -439,7 +439,7 @@ func TestAgentRealRun(t *testing.T) {
 	}
 
 	// 8. A simple request that should drive at least one tool call.
-	const prompt = "先调用工具读取仓库根目录下的 go.mod 文件(禁止凭记忆或猜测内容),读到真实内容后,再用一句话告诉我这个 Go module 的名称。"
+	const prompt = "阅读当前的项目的结构，给出一个项目的总结报告"
 
 	report := runReport{
 		GeneratedAt:  time.Now().Format(time.RFC3339),

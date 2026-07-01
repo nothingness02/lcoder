@@ -46,7 +46,8 @@ func (l *PluginLoader) Build(sourceDir, name string) (string, error) {
 
 // Load opens a plugin .so file and calls its New function.
 // The plugin must export a symbol named "New" with signature:
-//   func New(cfg map[string]any) (Extension, error)
+//
+//	func New(cfg map[string]any) (Extension, error)
 func (l *PluginLoader) Load(name string, cfg map[string]any) (Extension, error) {
 	path := filepath.Join(l.root, name+".so")
 	if _, err := os.Stat(path); err != nil {

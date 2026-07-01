@@ -53,6 +53,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SendPromptMsg:
 		return m, m.startPrompt(msg.Text)
 
+	case confirmRequestMsg:
+		m.confirm.show(msg.req.info, msg.req.resp)
+		m.state = stateConfirm
+		return m, nil
+
+	case confirmResponseMsg:
+		if m.confirm.visible && m.confirm.resp != nil {
+			m.confirm.resp <- confirmResult{allow: msg.allow}
+		}
+		m.confirm.hide()
+		m.state = stateProcessing
+		return m, nil
+
 	case tea.MouseMsg:
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -89,6 +102,9 @@ func (m *Model) handleKey(k tea.KeyMsg) (*Model, tea.Cmd) {
 
 	case stateProcessing:
 		return m.handleProcessingKey(k)
+
+	case stateConfirm:
+		return m.handleConfirmKey(k)
 
 	case stateProvider:
 		return m.handleProviderKey(k)
@@ -332,6 +348,29 @@ func (m *Model) handleProcessingKey(k tea.KeyMsg) (*Model, tea.Cmd) {
 	m.input, cmd = m.input.Update(k)
 	m.input.SyncHeight()
 	return m, cmd
+}
+
+// handleConfirmKey handles y/n/enter/esc while a permission prompt is active.
+func (m *Model) handleConfirmKey(k tea.KeyMsg) (*Model, tea.Cmd) {
+	allow := false
+	switch k.Type {
+	case tea.KeyEnter:
+		allow = false
+	case tea.KeyEsc:
+		allow = false
+	case tea.KeyRunes:
+		switch strings.ToLower(string(k.Runes)) {
+		case "y":
+			allow = true
+		case "n":
+			allow = false
+		default:
+			return m, nil
+		}
+	default:
+		return m, nil
+	}
+	return m, func() tea.Msg { return confirmResponseMsg{allow: allow} }
 }
 
 // submit dispatches a user submission: skill trigger, slash command, or prompt.

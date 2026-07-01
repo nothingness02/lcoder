@@ -22,7 +22,7 @@ func catalogFor(model string, window, target, reserve int) Config {
 func TestResolveContextBudgetDefaultFallback(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Model = "mystery-model"
-	budget, source := cfg.ResolveContextBudget(0)
+	budget, source := cfg.ResolveContextBudget(0, 0)
 
 	if source != "default" {
 		t.Fatalf("expected source default, got %q", source)
@@ -42,7 +42,7 @@ func TestResolveContextBudgetDefaultFallback(t *testing.T) {
 func TestResolveContextBudgetDiscoveredWindow(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Model = "mystery-model"
-	budget, source := cfg.ResolveContextBudget(256000)
+	budget, source := cfg.ResolveContextBudget(256000, 0)
 
 	if source != "discovered" {
 		t.Fatalf("expected source discovered, got %q", source)
@@ -62,7 +62,7 @@ func TestResolveContextBudgetDiscoveredWindow(t *testing.T) {
 // The catalog window overrides the discovered window (explicit per-model override).
 func TestResolveContextBudgetCatalogOverridesDiscovered(t *testing.T) {
 	cfg := catalogFor("claude-sonnet-4-20250514", 200000, 180000, 8192)
-	budget, source := cfg.ResolveContextBudget(999999)
+	budget, source := cfg.ResolveContextBudget(999999, 0)
 
 	if source != "catalog" {
 		t.Fatalf("expected source catalog, got %q", source)
@@ -79,7 +79,7 @@ func TestResolveContextBudgetUserOverrides(t *testing.T) {
 	cfg.Context.TargetTokens = 60000
 	cfg.Context.ReserveOutput = 4096
 
-	budget, source := cfg.ResolveContextBudget(999999)
+	budget, source := cfg.ResolveContextBudget(999999, 0)
 	if source != "user" {
 		t.Fatalf("expected source user, got %q", source)
 	}
@@ -92,7 +92,7 @@ func TestResolveContextBudgetUserOverrides(t *testing.T) {
 // derived from the window and reserve falls back to the default.
 func TestResolveContextBudgetCatalogWindowOnly(t *testing.T) {
 	cfg := catalogFor("local-model", 100000, 0, 0)
-	budget, source := cfg.ResolveContextBudget(0)
+	budget, source := cfg.ResolveContextBudget(0, 0)
 
 	if source != "catalog" {
 		t.Fatalf("expected source catalog, got %q", source)
@@ -113,7 +113,7 @@ func TestResolveContextBudgetTargetClamped(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Context.MaxTokens = 100000
 	cfg.Context.TargetTokens = 200000 // invalid: exceeds max
-	budget, _ := cfg.ResolveContextBudget(0)
+	budget, _ := cfg.ResolveContextBudget(0, 0)
 
 	if budget.TargetTotal >= budget.MaxTotal {
 		t.Fatalf("expected target < max, got target=%d max=%d", budget.TargetTotal, budget.MaxTotal)
@@ -122,7 +122,7 @@ func TestResolveContextBudgetTargetClamped(t *testing.T) {
 
 func TestResolveContextBudgetCompactThresholdDefault(t *testing.T) {
 	cfg := DefaultConfig()
-	budget, _ := cfg.ResolveContextBudget(0)
+	budget, _ := cfg.ResolveContextBudget(0, 0)
 	if budget.CompactThreshold != 0.9 {
 		t.Fatalf("expected default compact threshold 0.9, got %v", budget.CompactThreshold)
 	}
@@ -131,7 +131,7 @@ func TestResolveContextBudgetCompactThresholdDefault(t *testing.T) {
 func TestResolveContextBudgetCompactThresholdOverride(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Context.CompactThreshold = 0.75
-	budget, _ := cfg.ResolveContextBudget(0)
+	budget, _ := cfg.ResolveContextBudget(0, 0)
 	if budget.CompactThreshold != 0.75 {
 		t.Fatalf("expected compact threshold 0.75, got %v", budget.CompactThreshold)
 	}
@@ -141,9 +141,72 @@ func TestResolveContextBudgetCompactThresholdInvalidFallback(t *testing.T) {
 	for _, bad := range []float64{0, -0.5, 1.5} {
 		cfg := DefaultConfig()
 		cfg.Context.CompactThreshold = bad
-		budget, _ := cfg.ResolveContextBudget(0)
+		budget, _ := cfg.ResolveContextBudget(0, 0)
 		if budget.CompactThreshold != 0.9 {
 			t.Fatalf("expected fallback 0.9 for invalid %v, got %v", bad, budget.CompactThreshold)
 		}
+	}
+}
+
+func TestResolveContextBudgetDropThreshold(t *testing.T) {
+	cfg := Config{Context: ContextConfig{MaxTokens: 100000, DropThreshold: 0.8}}
+	b, _ := cfg.ResolveContextBudget(0, 0)
+	if b.DropThreshold != 0.8 {
+		t.Fatalf("expected DropThreshold 0.8, got %v", b.DropThreshold)
+	}
+
+	cfg.Context.DropThreshold = 0
+	b, _ = cfg.ResolveContextBudget(0, 0)
+	if b.DropThreshold != 1.0 {
+		t.Fatalf("expected default DropThreshold 1.0, got %v", b.DropThreshold)
+	}
+
+	cfg.Context.DropThreshold = 1.5
+	b, _ = cfg.ResolveContextBudget(0, 0)
+	if b.DropThreshold != 1.0 {
+		t.Fatalf("expected clamped DropThreshold 1.0, got %v", b.DropThreshold)
+	}
+}
+
+// MaxOutput ceiling resolution: catalog budget.max_output wins over discovered,
+// discovered wins over the fallback constant, and an explicit user cap clamps
+// the result but never raises it above the model's physical ceiling.
+func TestResolveContextBudgetMaxOutput(t *testing.T) {
+	// Nothing known anywhere -> fallback ceiling.
+	cfg := DefaultConfig()
+	cfg.Model = "mystery"
+	b, _ := cfg.ResolveContextBudget(0, 0)
+	if b.MaxOutput != fallbackOutputCeiling {
+		t.Fatalf("expected fallback ceiling %d, got %d", fallbackOutputCeiling, b.MaxOutput)
+	}
+
+	// Discovered ceiling used when catalog is silent.
+	b, _ = cfg.ResolveContextBudget(0, 8000)
+	if b.MaxOutput != 8000 {
+		t.Fatalf("expected discovered ceiling 8000, got %d", b.MaxOutput)
+	}
+
+	// Catalog budget.max_output overrides discovered.
+	cfg.Catalog = ModelCatalog{Models: []ModelMeta{{
+		ID:     "mystery",
+		Budget: ModelBudget{MaxOutput: 32000},
+	}}}
+	b, _ = cfg.ResolveContextBudget(0, 8000)
+	if b.MaxOutput != 32000 {
+		t.Fatalf("expected catalog ceiling 32000, got %d", b.MaxOutput)
+	}
+
+	// User cap below the ceiling clamps down.
+	cfg.Context.MaxOutput = 4096
+	b, _ = cfg.ResolveContextBudget(0, 8000)
+	if b.MaxOutput != 4096 {
+		t.Fatalf("expected user cap 4096, got %d", b.MaxOutput)
+	}
+
+	// User cap above the physical ceiling is ignored (never exceed the model).
+	cfg.Context.MaxOutput = 100000
+	b, _ = cfg.ResolveContextBudget(0, 8000)
+	if b.MaxOutput != 32000 {
+		t.Fatalf("expected clamp to ceiling 32000, got %d", b.MaxOutput)
 	}
 }

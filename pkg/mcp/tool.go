@@ -29,10 +29,10 @@ func (e *Executable) Definition() models.ToolDefinition {
 }
 
 // Execute invokes the MCP tool.
-func (e *Executable) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (e *Executable) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	result, err := e.client.CallTool(ctx, e.tool.Name, args)
 	if err != nil {
-		return models.NewToolResultError(err.Error()), nil
+		return models.NewToolExecutionResultError(err.Error()), nil
 	}
 
 	content := make([]models.ContentPart, 0, len(result.Content))
@@ -46,9 +46,9 @@ func (e *Executable) Execute(ctx context.Context, callID string, args map[string
 	}
 
 	if result.IsError {
-		return models.NewToolResultError(result.ContentText()), nil
+		return models.NewToolExecutionResultError(result.ContentText()), nil
 	}
-	return models.ToolResult{Content: content}, nil
+	return models.ToolExecutionResult{Content: content}, nil
 }
 
 // ContentText is a helper to extract text from CallToolResult content.

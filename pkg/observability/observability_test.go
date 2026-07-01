@@ -109,7 +109,7 @@ func TestCollectorToolExecutionAudit(t *testing.T) {
 		Base:       events.Base{Type: events.ToolExecutionEnd, Turn: 0},
 		ToolCallID: "call_2",
 		ToolName:   "bash",
-		Result:     models.NewToolResultText("ok"),
+		Result:     models.NewToolExecutionResultText("ok"),
 	})
 
 	if len(logger.Records) != 1 {

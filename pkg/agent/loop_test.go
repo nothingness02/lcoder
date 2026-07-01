@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -270,5 +271,242 @@ func TestAgentTransformContext(t *testing.T) {
 	// After the identity transform the request carries the compacted messages.
 	if n := len(adapter.LastRequest().Messages); n > 3 {
 		t.Fatalf("expected transformed messages, got %d", n)
+	}
+}
+
+type userConfirmFunc func(ctx context.Context, info ToolCallInfo) (bool, error)
+
+func (f userConfirmFunc) Confirm(ctx context.Context, info ToolCallInfo) (bool, error) {
+	return f(ctx, info)
+}
+
+func TestAgentPermissionAskAllowed(t *testing.T) {
+	toolMsg := models.NewAgentMessage(models.RoleAssistant, models.ToolCallContent{
+		Type: "tool_call", ID: "call_1", Name: "ls", Arguments: map[string]any{},
+	})
+	client := llmtest.Client(llmtest.Turn(llmtest.Done(toolMsg, nil)))
+
+	bus := events.New()
+	var audit []events.AuditEvent
+	bus.Subscribe(func(ctx context.Context, ev events.Event) error {
+		if a, ok := ev.(events.AuditEvent); ok {
+			audit = append(audit, a)
+		}
+		return nil
+	})
+
+	perms := permissions.NewEngineFromRules([]permissions.Rule{
+		{Tool: "ls", Pattern: "*", Decision: permissions.Ask},
+	})
+	confirmed := false
+	ag := New(Config{
+		SystemPrompt:      "You are helpful.",
+		Model:             models.ModelRef{Provider: "openai", ID: "gpt-4o-mini"},
+		MaxTurns:          2,
+		ToolExecutionMode: models.ExecutionParallel,
+	}, client, testRegistry(t.TempDir()), perms, bus)
+	ag.SetUserConfirm(userConfirmFunc(func(ctx context.Context, info ToolCallInfo) (bool, error) {
+		confirmed = true
+		return true, nil
+	}))
+
+	if err := ag.Prompt(context.Background(), models.UserMessage("list files")); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if !confirmed {
+		t.Fatal("expected user confirmation to be requested")
+	}
+	var sawToolEnd bool
+	for _, ev := range audit {
+		if ev.Decision == "ask" {
+			sawToolEnd = true
+		}
+	}
+	if !sawToolEnd {
+		t.Fatalf("expected ask audit event, got %+v", audit)
+	}
+}
+
+func TestAgentPermissionDeny(t *testing.T) {
+	toolMsg := models.NewAgentMessage(models.RoleAssistant, models.ToolCallContent{
+		Type: "tool_call", ID: "call_1", Name: "ls", Arguments: map[string]any{},
+	})
+	client, adapter := llmtest.NewScript(
+		llmtest.Turn(llmtest.Done(toolMsg, nil)),
+		llmtest.Turn(llmtest.Done(models.AssistantMessage("blocked"), nil)),
+	)
+
+	perms := permissions.NewEngineFromRules([]permissions.Rule{
+		{Tool: "ls", Pattern: "*", Decision: permissions.Deny},
+	})
+	ag := New(Config{
+		SystemPrompt:      "You are helpful.",
+		Model:             models.ModelRef{Provider: "openai", ID: "gpt-4o-mini"},
+		MaxTurns:          2,
+		ToolExecutionMode: models.ExecutionParallel,
+	}, client, testRegistry(t.TempDir()), perms, events.New())
+
+	if err := ag.Prompt(context.Background(), models.UserMessage("list files")); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if adapter.CallCount() != 2 {
+		t.Fatalf("expected 2 turns after denied tool, got %d", adapter.CallCount())
+	}
+}
+
+func TestAgentEventHandlerErrorIsObservedNotFatal(t *testing.T) {
+	client := llmtest.Client(llmtest.Turn(
+		llmtest.Done(models.AssistantMessage("ok"), nil),
+	))
+
+	bus := events.New()
+	bus.Subscribe(func(ctx context.Context, ev events.Event) error {
+		if ev.EventType() == events.TurnStart {
+			return fmt.Errorf("intentional handler failure")
+		}
+		return nil
+	})
+
+	exporter := observability.NewMemoryExporter()
+	obs := observability.NewCollector(exporter)
+	_ = obs.Subscribe(bus)
+	ag := NewWithObservability(Config{
+		SystemPrompt:      "You are helpful.",
+		Model:             models.ModelRef{Provider: "openai", ID: "gpt-4o-mini"},
+		MaxTurns:          1,
+		ToolExecutionMode: models.ExecutionParallel,
+	}, client, testRegistry("."), permissions.NewEngine(permissions.DefaultConfig()), bus, obs)
+
+	if err := ag.Prompt(context.Background(), models.UserMessage("hi")); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+
+	var found bool
+	for _, r := range exporter.Records {
+		if r.Type == "span_end" && r.Span != nil && r.Span.Name == "agent_run" {
+			for _, e := range r.Span.Events {
+				if e.Name == "runtime_error" {
+					found = true
+					break
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected runtime_error event on agent span, got records %+v", exporter.Records)
+	}
+}
+
+func TestAgentTransformContextPreservesEphemeralReminders(t *testing.T) {
+	client, adapter := llmtest.NewScript(llmtest.Turn(
+		llmtest.Done(models.AssistantMessage("ok"), nil),
+	))
+
+	ag := New(Config{
+		SystemPrompt:      "You are helpful.",
+		Model:             models.ModelRef{Provider: "openai", ID: "gpt-4o-mini"},
+		MaxTurns:          1,
+		ToolExecutionMode: models.ExecutionParallel,
+		ReminderProducers: []ReminderProducer{
+			func(messages []models.AgentMessage) []string {
+				return []string{"remember to check tests"}
+			},
+		},
+		TransformContext: func(ctx context.Context, msgs []models.AgentMessage) ([]models.AgentMessage, error) {
+			// Drop the first user message but keep everything else.
+			if len(msgs) > 1 {
+				return msgs[1:], nil
+			}
+			return msgs, nil
+		},
+	}, client, testRegistry("."), permissions.NewEngine(permissions.DefaultConfig()), events.New())
+
+	_ = ag.Prompt(context.Background(), models.UserMessage("hi"))
+
+	req := adapter.LastRequest()
+	found := false
+	for _, m := range req.Messages {
+		if m.Metadata != nil && m.Metadata["ephemeral"] == true {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected ephemeral reminder to survive TransformContext path, got messages %+v", req.Messages)
+	}
+}
+
+func TestAgentTransformContextPreservesCacheBreakpoints(t *testing.T) {
+	client, adapter := llmtest.NewScript(llmtest.Turn(
+		llmtest.Done(models.AssistantMessage("ok"), nil),
+	))
+
+	ag := New(Config{
+		SystemPrompt:      "You are helpful.",
+		Model:             models.ModelRef{Provider: "openai", ID: "gpt-4o-mini"},
+		MaxTurns:          1,
+		ToolExecutionMode: models.ExecutionParallel,
+		TransformContext: func(ctx context.Context, msgs []models.AgentMessage) ([]models.AgentMessage, error) {
+			return msgs, nil
+		},
+	}, client, testRegistry("."), permissions.NewEngine(permissions.DefaultConfig()), events.New())
+
+	_ = ag.Prompt(context.Background(), models.UserMessage("hi"))
+
+	req := adapter.LastRequest()
+	if len(req.CacheBreakpoints) == 0 {
+		t.Fatal("expected cache breakpoints to be preserved through identity TransformContext")
+	}
+}
+
+func TestAgentTransformContextRecomputesBreakpointsWhenCountChanges(t *testing.T) {
+	client, adapter := llmtest.NewScript(llmtest.Turn(
+		llmtest.Done(models.AssistantMessage("ok"), nil),
+	))
+
+	ag := New(Config{
+		SystemPrompt:      "You are helpful.",
+		Model:             models.ModelRef{Provider: "openai", ID: "gpt-4o-mini"},
+		MaxTurns:          1,
+		ToolExecutionMode: models.ExecutionParallel,
+		TransformContext: func(ctx context.Context, msgs []models.AgentMessage) ([]models.AgentMessage, error) {
+			return msgs[:1], nil
+		},
+	}, client, testRegistry("."), permissions.NewEngine(permissions.DefaultConfig()), events.New())
+
+	_ = ag.Prompt(context.Background(), models.UserMessage("hi"))
+
+	req := adapter.LastRequest()
+	if len(req.Messages) != 1 {
+		t.Fatalf("expected 1 transformed message, got %d", len(req.Messages))
+	}
+	if len(req.CacheBreakpoints) == 0 {
+		t.Fatal("expected cache breakpoints to be recomputed after message count changed")
+	}
+	if req.CacheBreakpoints[0] != 0 {
+		t.Fatalf("expected recomputed breakpoint at index 0, got %v", req.CacheBreakpoints)
+	}
+}
+
+func TestAgentTransformContextRecomputesMaxTokens(t *testing.T) {
+	client, adapter := llmtest.NewScript(llmtest.Turn(
+		llmtest.Done(models.AssistantMessage("ok"), nil),
+	))
+
+	ag := New(Config{
+		SystemPrompt:      "You are helpful.",
+		Model:             models.ModelRef{Provider: "openai", ID: "gpt-4o-mini"},
+		MaxTurns:          1,
+		ToolExecutionMode: models.ExecutionParallel,
+		TransformContext: func(ctx context.Context, msgs []models.AgentMessage) ([]models.AgentMessage, error) {
+			return msgs[:1], nil
+		},
+	}, client, testRegistry("."), permissions.NewEngine(permissions.DefaultConfig()), events.New())
+
+	_ = ag.Prompt(context.Background(), models.UserMessage("hi this is a long prompt to make max_tokens differ from a hardcoded value"))
+
+	req := adapter.LastRequest()
+	if req.Generation.MaxTokens <= 0 {
+		t.Fatalf("expected MaxTokens to be recomputed, got %d", req.Generation.MaxTokens)
 	}
 }

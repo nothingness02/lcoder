@@ -29,6 +29,7 @@ func Run(bus *events.Bus, ag *agent.Agent, sess *session.Session, store *session
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
+	ag.SetUserConfirm(&tuiConfirm{program: program})
 	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}

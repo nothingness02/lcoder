@@ -49,9 +49,9 @@ func (p *PrometheusExporter) Export(record Record) error {
 }
 
 type prometheusMetric struct {
-	type_   string
-	help    string
-	values  []promValue
+	type_  string
+	help   string
+	values []promValue
 }
 
 type promValue struct {

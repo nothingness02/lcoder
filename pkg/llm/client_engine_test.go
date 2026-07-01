@@ -46,7 +46,7 @@ func TestClientStreamMapsEvents(t *testing.T) {
 		}
 		switch ev.Type() {
 		case "text_delta":
-			gotText += ev.Payload["delta"].(string)
+			gotText += ev.Delta
 		case "done":
 			sawDone = true
 			msg, err := ev.FinalMessage()

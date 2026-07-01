@@ -13,8 +13,8 @@ import (
 	_ "github.com/lcoder/lcoder/pkg/tools/builtin"
 )
 
-// resultText extracts the concatenated text parts of a ToolResult.
-func resultText(res models.ToolResult) string {
+// resultText extracts the concatenated text parts of a ToolExecutionResult.
+func resultText(res models.ToolExecutionResult) string {
 	var out string
 	for _, p := range res.Content {
 		if tc, ok := p.(models.TextContent); ok {

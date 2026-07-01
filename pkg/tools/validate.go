@@ -87,7 +87,6 @@ func jsonTypeOf(value any) string {
 	return "unknown"
 }
 
-
 // requiredFields extracts the "required" list, tolerating both []string and
 // []any (the latter is what JSON unmarshaling produces).
 func requiredFields(params map[string]any) []string {

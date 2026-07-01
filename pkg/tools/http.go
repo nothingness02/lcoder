@@ -16,12 +16,12 @@ import (
 
 // HTTPConfig describes an external HTTP tool.
 type HTTPConfig struct {
-	Name          string            `json:"name"`
-	Endpoint      string            `json:"endpoint"`
-	Description   string            `json:"description"`
-	Parameters    map[string]any    `json:"parameters"`
+	Name          string               `json:"name"`
+	Endpoint      string               `json:"endpoint"`
+	Description   string               `json:"description"`
+	Parameters    map[string]any       `json:"parameters"`
 	ExecutionMode models.ExecutionMode `json:"execution_mode"`
-	Headers       map[string]string `json:"headers"`
+	Headers       map[string]string    `json:"headers"`
 }
 
 // HTTPExecutable calls a remote HTTP endpoint for a tool.
@@ -57,7 +57,7 @@ func (h *HTTPExecutable) Definition() models.ToolDefinition {
 }
 
 // Execute sends a tool call to the configured HTTP endpoint.
-func (h *HTTPExecutable) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (h *HTTPExecutable) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	cwd, _ := os.Getwd()
 	payload := map[string]any{
 		"tool_call_id": callID,
@@ -69,12 +69,12 @@ func (h *HTTPExecutable) Execute(ctx context.Context, callID string, args map[st
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.cfg.Endpoint, bytes.NewReader(body))
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "lcoder/0.1.0")
@@ -84,13 +84,13 @@ func (h *HTTPExecutable) Execute(ctx context.Context, callID string, args map[st
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	if resp.StatusCode >= 400 {
@@ -99,22 +99,22 @@ func (h *HTTPExecutable) Execute(ctx context.Context, callID string, args map[st
 			Details map[string]any `json:"details"`
 		}
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error != "" {
-			result := models.NewToolResultError(errResp.Error)
+			result := models.NewToolExecutionResultError(errResp.Error)
 			result.Details = map[string]any{"status_code": resp.StatusCode}
 			return result, nil
 		}
-		result := models.NewToolResultError(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody)))
+		result := models.NewToolExecutionResultError(fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(respBody)))
 		result.Details = map[string]any{"status_code": resp.StatusCode}
 		return result, nil
 	}
 
 	var success struct {
-		Content   []contentPartEnv  `json:"content"`
-		Details   map[string]any    `json:"details"`
-		Terminate bool              `json:"terminate"`
+		Content   []contentPartEnv `json:"content"`
+		Details   map[string]any   `json:"details"`
+		Terminate bool             `json:"terminate"`
 	}
 	if err := json.Unmarshal(respBody, &success); err != nil {
-		return models.NewToolResultError(fmt.Sprintf("invalid tool response: %s", string(respBody))), nil
+		return models.NewToolExecutionResultError(fmt.Sprintf("invalid tool response: %s", string(respBody))), nil
 	}
 
 	content := make([]models.ContentPart, 0, len(success.Content))
@@ -128,7 +128,7 @@ func (h *HTTPExecutable) Execute(ctx context.Context, callID string, args map[st
 		content = append(content, models.TextContent{Text: string(respBody)})
 	}
 
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content:   content,
 		Details:   success.Details,
 		Terminate: success.Terminate,
@@ -136,9 +136,9 @@ func (h *HTTPExecutable) Execute(ctx context.Context, callID string, args map[st
 }
 
 type contentPartEnv struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-	Data string `json:"data,omitempty"`
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	Data     string `json:"data,omitempty"`
 	MimeType string `json:"mime_type,omitempty"`
 }
 

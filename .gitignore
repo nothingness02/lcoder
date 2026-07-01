@@ -9,3 +9,5 @@ reference/
 .lcoder/credentials.yaml
 __pycache__/
 *.pyc
+.lcoder/
+LCODER.md

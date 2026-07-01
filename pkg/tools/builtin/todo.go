@@ -53,15 +53,15 @@ func (t *TodoWrite) Definition() models.ToolDefinition {
 	}
 }
 
-func (t *TodoWrite) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (t *TodoWrite) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	tasks, err := task.Parse(args["todos"])
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 	done, inProgress, pending := task.Counts(tasks)
 	summary := fmt.Sprintf("Updated %d tasks: %d done, %d in progress, %d pending",
 		len(tasks), done, inProgress, pending)
-	return models.NewToolResultText(summary), nil
+	return models.NewToolExecutionResultText(summary), nil
 }
 
 var _ tools.Executable = (*TodoWrite)(nil)

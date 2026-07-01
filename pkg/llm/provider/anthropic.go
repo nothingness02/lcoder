@@ -341,12 +341,15 @@ func anthropicTools(tools []models.ToolDefinition) []map[string]any {
 	return out
 }
 
-// anthropicMaxTokens returns the configured max output tokens, or a 4096 default.
+// anthropicMaxTokens returns the configured max output tokens, or a 16384
+// default. A coding agent routinely needs one turn to both reason and emit a
+// tool call (e.g. a file edit); too small a cap truncates the response before
+// the tool call is produced, stalling the agent mid-task.
 func anthropicMaxTokens(req models.TurnRequest) int {
 	if req.Generation.MaxTokens > 0 {
 		return req.Generation.MaxTokens
 	}
-	return 4096
+	return 16384
 }
 
 // ephemeralCacheControl is the Anthropic cache_control marker for prompt caching.

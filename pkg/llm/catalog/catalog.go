@@ -24,12 +24,31 @@ const (
 	cacheTTL     = 5 * time.Minute
 )
 
+// providerAliases maps Lcoder's canonical provider names to the provider keys
+// models.dev files records under. Lcoder surfaces "moonshot" in its picker, but
+// models.dev keys the same models as "moonshotai", so a lookup by the canonical
+// name has to fall back to the upstream key to resolve window/output/pricing.
+var providerAliases = map[string]string{
+	"moonshot": "moonshotai",
+}
+
+// providerCandidates returns the provider names to try for a lookup: the given
+// name first, then its models.dev alias (if any). Ordering keeps an exact,
+// same-name match ahead of the aliased one.
+func providerCandidates(provider string) []string {
+	if alias, ok := providerAliases[provider]; ok {
+		return []string{provider, alias}
+	}
+	return []string{provider}
+}
+
 // Entry is one catalog model record (snapshot/models.dev shape).
 type Entry struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name"`
 	Provider      string   `json:"provider"`
 	ContextWindow int      `json:"context_window"`
+	MaxOutput     int      `json:"max_output"`
 	Capabilities  []string `json:"capabilities"`
 	Cost          struct {
 		Prompt     float64 `json:"prompt"`
@@ -109,16 +128,40 @@ func (c *Catalog) List() []models.ModelInfo {
 func (c *Catalog) Window(provider, model string) int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if e, ok := c.entries[provider+"/"+model]; ok && e.ContextWindow > 0 {
-		return e.ContextWindow
-	}
-	for _, key := range c.order {
-		e := c.entries[key]
-		if e.Provider != provider || e.ContextWindow <= 0 {
-			continue
-		}
-		if strings.HasPrefix(e.ID, model) || strings.HasPrefix(model, e.ID) {
+	for _, p := range providerCandidates(provider) {
+		if e, ok := c.entries[p+"/"+model]; ok && e.ContextWindow > 0 {
 			return e.ContextWindow
+		}
+		for _, key := range c.order {
+			e := c.entries[key]
+			if e.Provider != p || e.ContextWindow <= 0 {
+				continue
+			}
+			if strings.HasPrefix(e.ID, model) || strings.HasPrefix(model, e.ID) {
+				return e.ContextWindow
+			}
+		}
+	}
+	return 0
+}
+
+// MaxOutput returns the single-response output ceiling for provider/model using
+// the same exact-then-prefix matching as Window. 0 if unknown.
+func (c *Catalog) MaxOutput(provider, model string) int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, p := range providerCandidates(provider) {
+		if e, ok := c.entries[p+"/"+model]; ok && e.MaxOutput > 0 {
+			return e.MaxOutput
+		}
+		for _, key := range c.order {
+			e := c.entries[key]
+			if e.Provider != p || e.MaxOutput <= 0 {
+				continue
+			}
+			if strings.HasPrefix(e.ID, model) || strings.HasPrefix(model, e.ID) {
+				return e.MaxOutput
+			}
 		}
 	}
 	return 0
@@ -137,6 +180,26 @@ func (c *Catalog) PriceTable() map[string]pricing.ModelPrice {
 		out[key] = pricing.ModelPrice{
 			Prompt: e.Cost.Prompt, Completion: e.Cost.Completion,
 			CacheRead: e.Cost.CacheRead, CacheWrite: e.Cost.CacheWrite,
+		}
+	}
+	// Mirror models.dev prices under Lcoder's canonical provider name so cost
+	// lookups keyed by the picker name (e.g. "moonshot/...") resolve records the
+	// snapshot files under its upstream alias ("moonshotai/..."). Existing
+	// canonical-name entries win and are never overwritten.
+	for canonical, dev := range providerAliases {
+		for key, e := range c.entries {
+			id, ok := strings.CutPrefix(key, dev+"/")
+			if !ok || (e.Cost.Prompt == 0 && e.Cost.Completion == 0) {
+				continue
+			}
+			mirrored := canonical + "/" + id
+			if _, exists := out[mirrored]; exists {
+				continue
+			}
+			out[mirrored] = pricing.ModelPrice{
+				Prompt: e.Cost.Prompt, Completion: e.Cost.Completion,
+				CacheRead: e.Cost.CacheRead, CacheWrite: e.Cost.CacheWrite,
+			}
 		}
 	}
 	return out
@@ -192,6 +255,7 @@ func fetchModelsDev(url string) ([]Entry, error) {
 			Name  string `json:"name"`
 			Limit struct {
 				Context int `json:"context"`
+				Output  int `json:"output"`
 			} `json:"limit"`
 			Cost struct {
 				Input      float64 `json:"input"`
@@ -209,7 +273,7 @@ func fetchModelsDev(url string) ([]Entry, error) {
 	var out []Entry
 	for provID, p := range raw {
 		for modelID, m := range p.Models {
-			e := Entry{ID: modelID, Name: m.Name, Provider: provID, ContextWindow: m.Limit.Context}
+			e := Entry{ID: modelID, Name: m.Name, Provider: provID, ContextWindow: m.Limit.Context, MaxOutput: m.Limit.Output}
 			if m.ToolCall {
 				e.Capabilities = append(e.Capabilities, "tools")
 			}

@@ -19,7 +19,7 @@ func bigRecent(n int) []models.AgentMessage {
 // 超过 CompactLimit 时,MaybeCompact 折叠较早消息为一条摘要并原地回写,
 // recent 头部恰为一条 compacted 摘要,且最后一条 user 仍在尾巴内。
 func TestMaybeCompactCommitsAndFolds(t *testing.T) {
-	mgr := NewManager(TokenBudget{MaxTotal: 4000, TargetTotal: 1000, ReserveOutput: 200},
+	mgr := NewManager(TokenBudget{MaxTotal: 2400, TargetTotal: 1000, ReserveOutput: 200},
 		WithSummarizer(func(msgs []models.AgentMessage) (string, error) {
 			return "folded summary", nil
 		}),
@@ -63,7 +63,7 @@ func TestMaybeCompactCommitsAndFolds(t *testing.T) {
 // 第二次压缩把已有摘要折叠进新摘要(滚动),摘要仍恒为一条。
 func TestMaybeCompactRollingFold(t *testing.T) {
 	calls := 0
-	mgr := NewManager(TokenBudget{MaxTotal: 4000, TargetTotal: 1000, ReserveOutput: 200},
+	mgr := NewManager(TokenBudget{MaxTotal: 2400, TargetTotal: 1000, ReserveOutput: 200},
 		WithSummarizer(func(msgs []models.AgentMessage) (string, error) {
 			calls++
 			// 第二次调用的输入里必须包含上一条摘要(滚动折叠)。

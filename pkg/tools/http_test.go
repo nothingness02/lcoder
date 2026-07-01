@@ -68,7 +68,7 @@ func TestHTTPExecutableError(t *testing.T) {
 	}
 }
 
-func isErrorResult(result models.ToolResult) bool {
+func isErrorResult(result models.ToolExecutionResult) bool {
 	if len(result.Content) == 0 {
 		return false
 	}

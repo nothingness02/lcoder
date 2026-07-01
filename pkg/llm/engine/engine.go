@@ -50,6 +50,10 @@ func (e *Engine) ListModels() []models.ModelInfo { return e.catalog.List() }
 // ModelWindow returns the catalog context window for provider/model (0 if unknown).
 func (e *Engine) ModelWindow(prov, model string) int { return e.catalog.Window(prov, model) }
 
+// ModelMaxOutput returns the catalog single-response output ceiling for
+// provider/model (0 if unknown).
+func (e *Engine) ModelMaxOutput(prov, model string) int { return e.catalog.MaxOutput(prov, model) }
+
 func (e *Engine) resolveProvider(ref models.ModelRef) string {
 	if ref.Provider != "" {
 		return ref.Provider

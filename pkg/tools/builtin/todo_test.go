@@ -46,8 +46,8 @@ func TestTodoWriteExecuteRejectsBad(t *testing.T) {
 	}
 }
 
-// toolText extracts the concatenated text content of a ToolResult.
-func toolText(res models.ToolResult) string {
+// toolText extracts the concatenated text content of a ToolExecutionResult.
+func toolText(res models.ToolExecutionResult) string {
 	var out string
 	for _, part := range res.Content {
 		if tc, ok := part.(models.TextContent); ok {

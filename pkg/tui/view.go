@@ -97,6 +97,8 @@ func (m Model) View() string {
 		return m.extPanel.View(m.width, m.height)
 	case stateProvider:
 		return m.renderProviderPanel()
+	case stateConfirm:
+		return m.confirmView()
 	}
 
 	top := m.viewport.View()
@@ -106,6 +108,11 @@ func (m Model) View() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, main, renderTaskSidebar(m.tasks, m.height))
 	}
 	return main
+}
+
+// confirmView renders a centered permission modal.
+func (m Model) confirmView() string {
+	return m.confirm.View(m.width, m.height)
 }
 
 // startupView renders the animated logo + header over an empty body.

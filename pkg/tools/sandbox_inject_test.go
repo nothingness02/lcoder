@@ -13,8 +13,8 @@ type fakeAwareTool struct{ got sandbox.Sandbox }
 func (f *fakeAwareTool) Definition() models.ToolDefinition {
 	return models.ToolDefinition{Name: "aware"}
 }
-func (f *fakeAwareTool) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
-	return models.ToolResult{}, nil
+func (f *fakeAwareTool) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
+	return models.ToolExecutionResult{}, nil
 }
 func (f *fakeAwareTool) UseSandbox(sb sandbox.Sandbox) { f.got = sb }
 
@@ -23,8 +23,8 @@ type plainTool struct{}
 func (plainTool) Definition() models.ToolDefinition {
 	return models.ToolDefinition{Name: "plain"}
 }
-func (plainTool) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
-	return models.ToolResult{}, nil
+func (plainTool) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
+	return models.ToolExecutionResult{}, nil
 }
 
 func TestRegisterInjectsSandboxIntoAwareTool(t *testing.T) {

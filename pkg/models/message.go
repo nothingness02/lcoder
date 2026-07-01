@@ -246,11 +246,11 @@ func (ToolCallContent) contentPart() {}
 
 // ToolResultContent represents the outcome of a tool invocation.
 type ToolResultContent struct {
-	Type       string        `json:"type"`
-	ToolCallID string        `json:"tool_call_id"`
-	Name       string        `json:"name"`
-	Content    []ContentPart `json:"content"`
-	IsError    bool          `json:"is_error"`
+	Type       string         `json:"type"`
+	ToolCallID string         `json:"tool_call_id"`
+	Name       string         `json:"name"`
+	Content    []ContentPart  `json:"content"`
+	IsError    bool           `json:"is_error"`
 	Details    map[string]any `json:"details,omitempty"`
 }
 
@@ -266,23 +266,23 @@ func (t ToolResultContent) Text() string {
 	return out
 }
 
-// ToolResult is the output returned by an executable tool.
-type ToolResult struct {
+// ToolExecutionResult is the output returned by an executable tool.
+type ToolExecutionResult struct {
 	Content   []ContentPart  `json:"content"`
 	Details   map[string]any `json:"details,omitempty"`
 	Terminate bool           `json:"terminate"`
 }
 
-// NewToolResultText creates a ToolResult containing a single text part.
-func NewToolResultText(text string) ToolResult {
-	return ToolResult{
+// NewToolExecutionResultText creates a ToolExecutionResult containing a single text part.
+func NewToolExecutionResultText(text string) ToolExecutionResult {
+	return ToolExecutionResult{
 		Content: []ContentPart{TextContent{Text: text}},
 	}
 }
 
-// NewToolResultError creates a ToolResult representing an error.
-func NewToolResultError(text string) ToolResult {
-	return ToolResult{
+// NewToolExecutionResultError creates a ToolExecutionResult representing an error.
+func NewToolExecutionResultError(text string) ToolExecutionResult {
+	return ToolExecutionResult{
 		Content: []ContentPart{TextContent{Text: text}},
 	}
 }

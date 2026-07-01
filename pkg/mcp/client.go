@@ -21,15 +21,15 @@ type Client struct {
 	stdout io.ReadCloser
 	stderr io.ReadCloser
 
-	mu       sync.Mutex
-	nextID   int32
-	pending  map[int]chan Response
-	closed   bool
-	stopErr  error
+	mu      sync.Mutex
+	nextID  int32
+	pending map[int]chan Response
+	closed  bool
+	stopErr error
 
-	serverInfo  Info
-	serverCaps  ServerCapabilities
-	tools       []Tool
+	serverInfo Info
+	serverCaps ServerCapabilities
+	tools      []Tool
 }
 
 // NewClient starts an MCP server command and returns a connected client.

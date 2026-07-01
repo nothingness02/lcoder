@@ -42,19 +42,19 @@ func (l *Ls) Definition() models.ToolDefinition {
 	}
 }
 
-func (l *Ls) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (l *Ls) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	path := l.cwd
 	if v, ok := args["path"].(string); ok && v != "" {
 		path = v
 	}
 	path, err := resolveAndCheck(l.cwd, l.sb, path, sandbox.FSRead)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	var lines []string
@@ -67,7 +67,7 @@ func (l *Ls) Execute(ctx context.Context, callID string, args map[string]any) (m
 	}
 	sort.Strings(lines)
 
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content: []models.ContentPart{models.TextContent{Text: strings.Join(lines, "\n")}},
 		Details: map[string]any{"path": path, "count": len(lines)},
 	}, nil

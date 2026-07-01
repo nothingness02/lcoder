@@ -52,10 +52,10 @@ func (g *Grep) Definition() models.ToolDefinition {
 	}
 }
 
-func (g *Grep) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (g *Grep) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	pattern, ok := args["pattern"].(string)
 	if !ok || pattern == "" {
-		return models.ToolResult{}, fmt.Errorf("missing pattern")
+		return models.ToolExecutionResult{}, fmt.Errorf("missing pattern")
 	}
 
 	path := g.cwd
@@ -64,7 +64,7 @@ func (g *Grep) Execute(ctx context.Context, callID string, args map[string]any) 
 	}
 	path, err := resolveAndCheck(g.cwd, g.sb, path, sandbox.FSRead)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	var glob string
@@ -105,10 +105,10 @@ func (g *Grep) Execute(ctx context.Context, callID string, args map[string]any) 
 		return nil
 	})
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content: []models.ContentPart{models.TextContent{Text: strings.Join(matches, "\n")}},
 		Details: map[string]any{"path": path, "matches": len(matches)},
 	}, nil

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/lcoder/lcoder/pkg/agent"
 	"github.com/lcoder/lcoder/pkg/config"
 	"github.com/lcoder/lcoder/pkg/contextmgr"
 	"github.com/lcoder/lcoder/pkg/events"
@@ -37,8 +38,9 @@ func (f *fakeAgent) Mode() string {
 	}
 	return f.mode
 }
-func (f *fakeAgent) Steer(models.AgentMessage) {}
-func (f *fakeAgent) Abort()                    {}
+func (f *fakeAgent) SetUserConfirm(uc agent.UserConfirmation) {}
+func (f *fakeAgent) Steer(models.AgentMessage)                {}
+func (f *fakeAgent) Abort()                                   {}
 func (f *fakeAgent) SwitchModel(ref models.ModelRef, budget contextmgr.TokenBudget) {
 	f.switchedModel = ref
 	f.switchedBudget = budget
@@ -162,7 +164,7 @@ func TestModelViewNotEmpty(t *testing.T) {
 }
 
 func TestToolResultText(t *testing.T) {
-	result := models.NewToolResultText("hello world this is a long result")
+	result := models.NewToolExecutionResultText("hello world this is a long result")
 	out := toolResultText(result)
 	if out == "" {
 		t.Fatal("expected non-empty result text")

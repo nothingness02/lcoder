@@ -59,14 +59,14 @@ func (t slowProbeTool) Definition() models.ToolDefinition {
 	}
 }
 
-func (t slowProbeTool) Execute(ctx context.Context, _ string, args map[string]any) (models.ToolResult, error) {
+func (t slowProbeTool) Execute(ctx context.Context, _ string, args map[string]any) (models.ToolExecutionResult, error) {
 	label, _ := args["label"].(string)
 	select {
 	case <-time.After(t.delay):
 	case <-ctx.Done():
-		return models.ToolResult{}, ctx.Err()
+		return models.ToolExecutionResult{}, ctx.Err()
 	}
-	return models.NewToolResultText(fmt.Sprintf("probe %q done", label)), nil
+	return models.NewToolExecutionResultText(fmt.Sprintf("probe %q done", label)), nil
 }
 
 // probeInterval is one observed tool execution, with wall-clock start/end

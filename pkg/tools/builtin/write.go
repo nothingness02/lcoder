@@ -47,28 +47,28 @@ func (w *Write) Definition() models.ToolDefinition {
 	}
 }
 
-func (w *Write) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolResult, error) {
+func (w *Write) Execute(ctx context.Context, callID string, args map[string]any) (models.ToolExecutionResult, error) {
 	path, ok := args["path"].(string)
 	if !ok || path == "" {
-		return models.ToolResult{}, fmt.Errorf("missing path")
+		return models.ToolExecutionResult{}, fmt.Errorf("missing path")
 	}
 	content, ok := args["content"].(string)
 	if !ok {
-		return models.ToolResult{}, fmt.Errorf("missing content")
+		return models.ToolExecutionResult{}, fmt.Errorf("missing content")
 	}
 	path, err := resolveAndCheck(w.cwd, w.sb, path, sandbox.FSWrite)
 	if err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return models.ToolResult{}, err
+		return models.ToolExecutionResult{}, err
 	}
 
-	return models.ToolResult{
+	return models.ToolExecutionResult{
 		Content: []models.ContentPart{
 			models.TextContent{Text: fmt.Sprintf("Wrote %d characters to %s", len(content), path)},
 		},

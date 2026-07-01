@@ -4,6 +4,7 @@ import (
 	"context"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/lcoder/lcoder/pkg/agent"
 	"github.com/lcoder/lcoder/pkg/contextmgr"
 	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/models"
@@ -61,6 +62,7 @@ type AgentRunner interface {
 	Continue(ctx context.Context) error
 	AllMessages() []models.AgentMessage
 	SetMessages(msgs []models.AgentMessage)
+	SetUserConfirm(uc agent.UserConfirmation)
 	Stats() map[string]int
 	Mode() string
 	Steer(msg models.AgentMessage) // follow-up while processing

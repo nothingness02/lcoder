@@ -21,6 +21,7 @@ const (
 	stateStartup uiState = iota
 	stateInput
 	stateProcessing
+	stateConfirm
 	stateSessionPicker
 	stateExtensions
 	stateProvider
@@ -99,6 +100,9 @@ type Model struct {
 	cfg                config.Config
 	provPanel          providerPanel
 	needsProviderSetup bool
+
+	// Confirmation panel for interactive permission approvals.
+	confirm confirmPanel
 
 	// suggestion (ghost text) state.
 	completedTurns int
