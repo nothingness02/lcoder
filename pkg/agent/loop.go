@@ -273,30 +273,48 @@ func (a *Agent) Mode() string {
 }
 
 // WithMode returns a copy of the agent with a different mode set.
-// It snapshots the current context manager so that mode-specific system prompts
-// are applied consistently and not repeatedly appended.
+// It snapshots the current agent state via Checkpoint/Restore so that mode-specific
+// system prompts are applied consistently and not repeatedly appended.
 func (a *Agent) WithMode(mode string) *Agent {
-	cfg := a.cfg
-	steeringQueue := append([]models.AgentMessage(nil), a.loopState.DrainSteeringQueue()...)
-	followUpQueue := append([]models.AgentMessage(nil), a.loopState.DrainFollowUpQueue()...)
-	// Restore the drained queues on the original agent so the snapshot does not
-	// mutate it.
-	a.loopState.steeringQueue = steeringQueue
-	a.loopState.followUpQueue = followUpQueue
+	cp, err := a.Checkpoint()
+	if err != nil {
+		panic(fmt.Sprintf("WithMode: checkpoint failed: %v", err))
+	}
+	cp.Mode = mode
 
+	cfg := a.cfg
 	cfg.Mode = mode
-	return &Agent{
+
+	freshMgr := contextmgr.NewManager(
+		cp.Context.Budget,
+		contextmgr.WithEstimator(a.mgr.Estimator()),
+		contextmgr.WithSummarizer(a.mgr.Summarizer()),
+		contextmgr.WithWindowPolicy(a.mgr.WindowPolicy()),
+	)
+	cfg.ContextManager = freshMgr
+
+	emitter := a.emitter
+	if emitter == nil {
+		emitter = &eventEmitter{bus: a.bus, obs: a.obsCollector}
+	}
+
+	fresh := &Agent{
 		cfg:          cfg,
-		mgr:          a.mgr.Clone(),
+		mgr:          freshMgr,
 		llm:          a.llm,
 		registry:     a.registry,
 		bus:          a.bus,
 		obsCollector: a.obsCollector,
-		emitter:      a.emitter,
-		loopState:    a.loopState.clone(steeringQueue, followUpQueue),
-		streamer:     a.streamer,
-		executor:     a.executor.clone(),
+		emitter:      emitter,
+		loopState:    newStateHolder(),
+		streamer:     &streamer{cfg: &cfg, llm: a.llm, mgr: freshMgr, obs: a.obsCollector, emitter: emitter},
+		executor:     newExecutor(&cfg, freshMgr, a.registry, a.executor.permissions, emitter),
 	}
+
+	if err := fresh.Restore(cp); err != nil {
+		panic(fmt.Sprintf("WithMode: restore failed: %v", err))
+	}
+	return fresh
 }
 
 func (a *Agent) run(ctx context.Context, initialPrompts []models.AgentMessage) error {

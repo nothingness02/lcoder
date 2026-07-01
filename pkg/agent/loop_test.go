@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/lcoder/lcoder/pkg/contextmgr"
 	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/llm/llmtest"
 	"github.com/lcoder/lcoder/pkg/models"
@@ -225,6 +227,18 @@ func TestAgentWithModeSnapshot(t *testing.T) {
 	mm.modes["code"] = ModeConfig{Name: "code", SystemPrompt: "code mode"}
 	mm.modes["review"] = ModeConfig{Name: "review", SystemPrompt: "review mode"}
 
+	mgr := contextmgr.NewManager(
+		contextmgr.TokenBudget{
+			MaxTotal:      128000,
+			TargetTotal:   120000,
+			ReserveOutput: 8192,
+			MaxOutput:     16384,
+		},
+		contextmgr.WithSummarizer(func(msgs []models.AgentMessage) (string, error) {
+			return "summary", nil
+		}),
+	)
+
 	obs := observability.NewCollector(observability.NewMemoryExporter())
 	ag := NewWithObservability(Config{
 		SystemPrompt:      "base",
@@ -233,7 +247,14 @@ func TestAgentWithModeSnapshot(t *testing.T) {
 		ToolExecutionMode: models.ExecutionParallel,
 		ModeManager:       mm,
 		Mode:              "code",
+		ContextManager:    mgr,
 	}, client, testRegistry("."), permissions.NewEngine(permissions.DefaultConfig()), events.New(), obs)
+
+	steerMsg := models.UserMessage("steer me")
+	followUpMsg := models.UserMessage("follow up")
+	ag.Steer(steerMsg)
+	ag.FollowUp(followUpMsg)
+	ag.executor.activateDeferredTool("edit")
 
 	reviewAg := ag.WithMode("review")
 	if reviewAg.cfg.Mode != "review" {
@@ -243,6 +264,22 @@ func TestAgentWithModeSnapshot(t *testing.T) {
 	// have accumulated mode prompts from the original agent.
 	if reviewAg.mgr.SystemPrompt() != ag.mgr.SystemPrompt() {
 		t.Fatalf("WithMode should snapshot base system prompt")
+	}
+	if len(reviewAg.loopState.steeringQueue) != 1 || !reflect.DeepEqual(reviewAg.loopState.steeringQueue, []models.AgentMessage{steerMsg}) {
+		t.Errorf("steering queue = %+v, want %+v", reviewAg.loopState.steeringQueue, []models.AgentMessage{steerMsg})
+	}
+	if len(reviewAg.loopState.followUpQueue) != 1 || !reflect.DeepEqual(reviewAg.loopState.followUpQueue, []models.AgentMessage{followUpMsg}) {
+		t.Errorf("follow-up queue = %+v, want %+v", reviewAg.loopState.followUpQueue, []models.AgentMessage{followUpMsg})
+	}
+	if !reflect.DeepEqual(reviewAg.executor.activeDeferred, map[string]bool{"edit": true}) {
+		t.Errorf("active deferred = %+v, want %+v", reviewAg.executor.activeDeferred, map[string]bool{"edit": true})
+	}
+	// The original agent should be untouched.
+	if len(ag.loopState.steeringQueue) != 1 || !reflect.DeepEqual(ag.loopState.steeringQueue, []models.AgentMessage{steerMsg}) {
+		t.Errorf("original steering queue mutated: %+v", ag.loopState.steeringQueue)
+	}
+	if reviewAg.mgr == ag.mgr {
+		t.Error("WithMode should create an independent context manager")
 	}
 }
 

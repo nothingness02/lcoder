@@ -38,23 +38,6 @@ func newExecutor(cfg *Config, mgr *contextmgr.Manager, registry *tools.Registry,
 	}
 }
 
-func (e *executor) clone() *executor {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	active := make(map[string]bool, len(e.activeDeferred))
-	for k, v := range e.activeDeferred {
-		active[k] = v
-	}
-	return &executor{
-		cfg:            e.cfg,
-		mgr:            e.mgr,
-		registry:       e.registry,
-		permissions:    e.permissions,
-		emitter:        e.emitter,
-		activeDeferred: active,
-	}
-}
-
 func (e *executor) execute(ctx context.Context, turn int, assistantMsg models.AgentMessage, calls []models.ToolCallContent, execMode models.ExecutionMode) ([]models.AgentMessage, bool) {
 	sequential := execMode == models.ExecutionSequential
 	if e.cfg.ModeManager != nil {

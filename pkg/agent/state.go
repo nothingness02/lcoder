@@ -28,17 +28,6 @@ func newStateHolder() *stateHolder {
 	return &stateHolder{abortCh: make(chan struct{})}
 }
 
-func (s *stateHolder) clone(steeringQueue, followUpQueue []models.AgentMessage) *stateHolder {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return &stateHolder{
-		state:         s.state,
-		steeringQueue: append([]models.AgentMessage(nil), steeringQueue...),
-		followUpQueue: append([]models.AgentMessage(nil), followUpQueue...),
-		abortCh:       make(chan struct{}),
-	}
-}
-
 // State returns the current agent state.
 func (s *stateHolder) State() State {
 	s.mu.Lock()
