@@ -548,6 +548,12 @@ func (m *Model) dispatchSlash(text string) tea.Cmd {
 		m.openProviderPanel()
 	case "status":
 		m.showTextPanel("status", m.statusText())
+	case "save":
+		m.saveCheckpoint()
+	case "restore":
+		m.restoreCheckpoint()
+	case "checkpoints":
+		m.listCheckpoints()
 	case "skill":
 		m.openSkillPanel()
 	case "retry":

@@ -52,7 +52,7 @@ system_prompt: you review
 	bus := events.New()
 	ag := &fakeAgent{}
 	sess := &fakeSession{id: "abc123"}
-	m := NewModel(bus, ag, sess, &fakeSessionStore{}, ".", "abc123", "openai/gpt-4o-mini", "dark", nil, nil, mm, nil, config.Config{}, false)
+	m := NewModel(bus, ag, sess, &fakeSessionStore{}, ".", "abc123", "openai/gpt-4o-mini", "dark", nil, nil, mm, nil, config.Config{}, nil, false)
 	m.width = 80
 	m.height = 24
 	m.state = stateInput
@@ -115,7 +115,7 @@ func TestCmdPanelSkillTriggers(t *testing.T) {
 	loaded := []skills.Skill{
 		{Name: "security-review", WhenToUse: "Review code", Steps: []string{"Read file", "Find risks"}},
 	}
-	m := NewModel(bus, ag, sess, &fakeSessionStore{}, ".", "abc123", "openai/gpt-4o-mini", "dark", nil, nil, nil, nil, config.Config{}, false, loaded...)
+	m := NewModel(bus, ag, sess, &fakeSessionStore{}, ".", "abc123", "openai/gpt-4o-mini", "dark", nil, nil, nil, nil, config.Config{}, nil, false, loaded...)
 	m.width = 80
 	m.height = 24
 	m.state = stateInput

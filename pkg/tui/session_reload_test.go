@@ -17,7 +17,7 @@ func newStartupModel(prior []models.AgentMessage) *Model {
 	ag := &fakeAgent{msgs: prior}
 	sess := &fakeSession{id: "sess1"}
 	store := &fakeSessionStore{}
-	m := NewModel(bus, ag, sess, store, ".", "sess1", "openai/gpt-4o-mini", "dark", nil, nil, nil, nil, config.Config{}, false)
+	m := NewModel(bus, ag, sess, store, ".", "sess1", "openai/gpt-4o-mini", "dark", nil, nil, nil, nil, config.Config{}, nil, false)
 	return m
 }
 

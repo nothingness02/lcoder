@@ -5,10 +5,15 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lcoder/lcoder/pkg/agent"
+	"github.com/lcoder/lcoder/pkg/checkpoint"
 	"github.com/lcoder/lcoder/pkg/contextmgr"
 	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/models"
 )
+
+// Checkpoint aliases so the TUI can type-assert the agent for snapshot operations.
+type CheckpointSource = checkpoint.Source
+type CheckpointTarget = checkpoint.Target
 
 // EventMsg carries an agent event from the events bus into bubbletea.
 type EventMsg struct {

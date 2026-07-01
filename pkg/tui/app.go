@@ -16,7 +16,7 @@ import (
 
 // Run starts the TUI application.
 func Run(bus *events.Bus, ag *agent.Agent, sess *session.Session, store *session.Store, cwd, modelRef, themeStyle string, httpTools []HTTPToolItem, mcpRegistry *mcp.Registry, modeManager *agent.ModeManager, capabilities []string, llmClient *llm.Client, cfg config.Config, needsProviderSetup bool, loadedSkills ...skills.Skill) error {
-	model := NewModel(bus, ag, sess, store, cwd, sess.ID, modelRef, themeStyle, httpTools, mcpRegistry, modeManager, llmClient, cfg, needsProviderSetup, loadedSkills...)
+	model := NewModel(bus, ag, sess, store, cwd, sess.ID, modelRef, themeStyle, httpTools, mcpRegistry, modeManager, llmClient, cfg, nil, needsProviderSetup, loadedSkills...)
 	model.SetCapabilities(capabilities)
 	defer model.Close()
 
@@ -38,7 +38,7 @@ func Run(bus *events.Bus, ag *agent.Agent, sess *session.Session, store *session
 
 // RunWithIO starts the TUI with custom input/output for testing.
 func RunWithIO(bus *events.Bus, ag *agent.Agent, sess *session.Session, store *session.Store, cwd, modelRef, themeStyle string, httpTools []HTTPToolItem, mcpRegistry *mcp.Registry, modeManager *agent.ModeManager, llmClient *llm.Client, cfg config.Config, input *os.File, output *os.File, loadedSkills ...skills.Skill) (tea.Model, error) {
-	model := NewModel(bus, ag, sess, store, cwd, sess.ID, modelRef, themeStyle, httpTools, mcpRegistry, modeManager, llmClient, cfg, false, loadedSkills...)
+	model := NewModel(bus, ag, sess, store, cwd, sess.ID, modelRef, themeStyle, httpTools, mcpRegistry, modeManager, llmClient, cfg, nil, false, loadedSkills...)
 	defer model.Close()
 
 	program := tea.NewProgram(

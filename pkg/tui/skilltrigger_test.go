@@ -16,7 +16,7 @@ func newSkillModel() (*Model, *fakeAgent, *fakeSession) {
 	sess := &fakeSession{id: "abc123"}
 	store := &fakeSessionStore{}
 	skill := skills.Skill{Name: "tester", WhenToUse: "writing tests", Steps: []string{"write a test"}}
-	m := NewModel(bus, agent, sess, store, ".", "abc123", "openai/gpt-4o-mini", "dark", nil, nil, nil, nil, config.Config{}, false, skill)
+	m := NewModel(bus, agent, sess, store, ".", "abc123", "openai/gpt-4o-mini", "dark", nil, nil, nil, nil, config.Config{}, nil, false, skill)
 	m.width = 80
 	m.height = 24
 	m.state = stateInput

@@ -72,7 +72,7 @@ func TestTuiConfirmBlocksUntilResponse(t *testing.T) {
 }
 
 func TestConfirmPanelStateTransitions(t *testing.T) {
-	m := NewModel(events.New(), &fakeAgent{}, &fakeSession{}, &fakeSessionStore{}, ".", "s1", "openai/gpt-4o-mini", "dark", nil, nil, nil, nil, config.Config{}, false)
+	m := NewModel(events.New(), &fakeAgent{}, &fakeSession{}, &fakeSessionStore{}, ".", "s1", "openai/gpt-4o-mini", "dark", nil, nil, nil, nil, config.Config{}, nil, false)
 
 	resp := make(chan confirmResult, 1)
 	info := agent.ToolCallInfo{

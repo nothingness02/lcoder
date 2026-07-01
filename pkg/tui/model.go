@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lcoder/lcoder/pkg/agent"
+	"github.com/lcoder/lcoder/pkg/checkpoint"
 	"github.com/lcoder/lcoder/pkg/config"
 	"github.com/lcoder/lcoder/pkg/events"
 	"github.com/lcoder/lcoder/pkg/llm"
@@ -32,10 +33,11 @@ type Model struct {
 	width, height int
 	cwd           string
 
-	agent   AgentRunner
-	session SessionWriter
-	store   SessionStore
-	bus     *events.Bus
+	agent           AgentRunner
+	session         SessionWriter
+	store           SessionStore
+	checkpointStore checkpoint.Store
+	bus             *events.Bus
 
 	unsubscribe func()
 	eventCh     chan events.Event
@@ -110,7 +112,7 @@ type Model struct {
 }
 
 // NewModel keeps the exact signature the call sites and tests rely on.
-func NewModel(bus *events.Bus, ag AgentRunner, session SessionWriter, store SessionStore, cwd, sessionID, model, themeStyle string, httpTools []HTTPToolItem, mcpRegistry *mcp.Registry, modeManager *agent.ModeManager, llmClient *llm.Client, cfg config.Config, needsProviderSetup bool, loadedSkills ...skills.Skill) *Model {
+func NewModel(bus *events.Bus, ag AgentRunner, session SessionWriter, store SessionStore, cwd, sessionID, model, themeStyle string, httpTools []HTTPToolItem, mcpRegistry *mcp.Registry, modeManager *agent.ModeManager, llmClient *llm.Client, cfg config.Config, checkpointStore checkpoint.Store, needsProviderSetup bool, loadedSkills ...skills.Skill) *Model {
 	// Theme override: honor explicit "light"/"dark", else auto-detect.
 	switch themeStyle {
 	case "light":
@@ -125,6 +127,7 @@ func NewModel(bus *events.Bus, ag AgentRunner, session SessionWriter, store Sess
 		agent:              ag,
 		session:            session,
 		store:              store,
+		checkpointStore:    checkpointStore,
 		cwd:                cwd,
 		bus:                bus,
 		eventCh:            make(chan events.Event, 64),
